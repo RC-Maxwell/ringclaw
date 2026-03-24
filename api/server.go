@@ -4,17 +4,59 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/ringclaw/ringclaw/messaging"
 	"github.com/ringclaw/ringclaw/ringcentral"
 )
 
+const maxRequestBodyBytes = 1 << 20 // 1MB
+
 // Server provides an HTTP API for sending messages.
 type Server struct {
-	client *ringcentral.Client
-	addr   string
+	client  *ringcentral.Client
+	addr    string
+	limiter *rateLimiter
+}
+
+// rateLimiter is a simple token bucket per-IP rate limiter.
+type rateLimiter struct {
+	mu       sync.Mutex
+	visitors map[string]*visitor
+	rate     int           // max requests per window
+	window   time.Duration
+}
+
+type visitor struct {
+	count    int
+	resetAt  time.Time
+}
+
+func newRateLimiter(rate int, window time.Duration) *rateLimiter {
+	return &rateLimiter{
+		visitors: make(map[string]*visitor),
+		rate:     rate,
+		window:   window,
+	}
+}
+
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	v, ok := rl.visitors[ip]
+	if !ok || now.After(v.resetAt) {
+		rl.visitors[ip] = &visitor{count: 1, resetAt: now.Add(rl.window)}
+		return true
+	}
+	if v.count >= rl.rate {
+		return false
+	}
+	v.count++
+	return true
 }
 
 // NewServer creates an API server.
@@ -22,7 +64,11 @@ func NewServer(client *ringcentral.Client, addr string) *Server {
 	if addr == "" {
 		addr = "127.0.0.1:18011"
 	}
-	return &Server{client: client, addr: addr}
+	return &Server{
+		client:  client,
+		addr:    addr,
+		limiter: newRateLimiter(60, 1*time.Minute), // 60 req/min per IP
+	}
 }
 
 // SendRequest is the JSON body for POST /api/send.
@@ -48,7 +94,7 @@ func (s *Server) Run(ctx context.Context) error {
 		srv.Shutdown(context.Background())
 	}()
 
-	log.Printf("[api] listening on %s", s.addr)
+	slog.Info("listening", "component", "api", "addr", s.addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -61,6 +107,12 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !s.limiter.allow(r.RemoteAddr) {
+		http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
 	var req SendRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
@@ -85,20 +137,20 @@ func (s *Server) handleSend(w http.ResponseWriter, r *http.Request) {
 
 	if req.Text != "" {
 		if err := messaging.SendTextReply(ctx, s.client, chatID, req.Text); err != nil {
-			log.Printf("[api] send text failed: %v", err)
+			slog.Error("send text failed", "component", "api", "error", err)
 			http.Error(w, "send text failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("[api] sent text to %s: %q", chatID, req.Text)
+		slog.Info("sent text", "component", "api", "chatID", chatID, "text", req.Text)
 	}
 
 	if req.MediaURL != "" {
 		if err := messaging.SendMediaFromURL(ctx, s.client, chatID, req.MediaURL); err != nil {
-			log.Printf("[api] send media failed: %v", err)
+			slog.Error("send media failed", "component", "api", "error", err)
 			http.Error(w, "send media failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}
-		log.Printf("[api] sent media to %s: %s", chatID, req.MediaURL)
+		slog.Info("sent media", "component", "api", "chatID", chatID, "mediaURL", req.MediaURL)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

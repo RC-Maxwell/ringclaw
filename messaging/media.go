@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -13,6 +13,8 @@ import (
 
 	"github.com/ringclaw/ringclaw/ringcentral"
 )
+
+var mediaHTTPClient = &http.Client{Timeout: 60 * time.Second}
 
 // reMarkdownImage matches markdown image syntax: ![alt](url)
 var reMarkdownImage = regexp.MustCompile(`!\[[^\]]*\]\(([^)]+)\)`)
@@ -38,14 +40,14 @@ func SendMediaFromURL(ctx context.Context, client *ringcentral.Client, chatID, m
 	}
 
 	fileName := filenameFromURL(mediaURL)
-	log.Printf("[media] uploading %s (%d bytes) to chat %s", fileName, len(data), chatID)
+	slog.Info("uploading file", "component", "media", "fileName", fileName, "bytes", len(data), "chatID", chatID)
 
 	_, err = client.UploadFile(ctx, chatID, fileName, data)
 	if err != nil {
 		return fmt.Errorf("upload file: %w", err)
 	}
 
-	log.Printf("[media] sent %s to chat %s", fileName, chatID)
+	slog.Info("sent file", "component", "media", "fileName", fileName, "chatID", chatID)
 	return nil
 }
 
@@ -58,7 +60,7 @@ func downloadFile(ctx context.Context, url string) ([]byte, string, error) {
 		return nil, "", err
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := mediaHTTPClient.Do(req)
 	if err != nil {
 		return nil, "", err
 	}

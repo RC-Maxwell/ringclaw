@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"strings"
 	"sync"
@@ -40,16 +40,18 @@ const sentPostTTL = 5 * time.Minute
 func (m *Monitor) MarkSentPost(id string) {
 	m.mu.Lock()
 	m.sentPosts[id] = time.Now()
-	// Evict expired entries
-	if len(m.sentPosts) > 100 {
-		now := time.Now()
-		for k, t := range m.sentPosts {
-			if now.Sub(t) > sentPostTTL {
-				delete(m.sentPosts, k)
-			}
+	m.evictExpiredLocked()
+	m.mu.Unlock()
+}
+
+// evictExpiredLocked removes expired entries from sentPosts. Must hold m.mu.
+func (m *Monitor) evictExpiredLocked() {
+	now := time.Now()
+	for k, t := range m.sentPosts {
+		if now.Sub(t) > sentPostTTL {
+			delete(m.sentPosts, k)
 		}
 	}
-	m.mu.Unlock()
 }
 
 // IsSentPost checks if a post was recently sent by the bot.
@@ -76,14 +78,15 @@ func NewMonitor(client *Client, handler MessageHandler) *Monitor {
 	}
 }
 
-// Run starts the WebSocket event loop. Blocks until ctx is cancelled.
+// Run starts the WebSocket event loop with automatic reconnection.
+// Blocks until ctx is cancelled.
 func (m *Monitor) Run(ctx context.Context) error {
-	log.Println("[monitor] starting WebSocket event loop")
+	slog.Info("starting WebSocket event loop", "component", "monitor")
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[monitor] shutting down")
+			slog.Info("shutting down", "component", "monitor")
 			return ctx.Err()
 		default:
 		}
@@ -95,8 +98,7 @@ func (m *Monitor) Run(ctx context.Context) error {
 
 		m.failures++
 		backoff := m.calcBackoff()
-		log.Printf("[monitor] WebSocket disconnected (%d/%d, backoff=%s): %v",
-			m.failures, maxConsecutiveFailures, backoff, err)
+		slog.Warn("WebSocket disconnected", "component", "monitor", "failures", m.failures, "backoff", backoff, "error", err)
 
 		select {
 		case <-time.After(backoff):
@@ -113,7 +115,7 @@ func (m *Monitor) connectAndListen(ctx context.Context) error {
 	}
 
 	wsURL := wsToken.URI + "?access_token=" + url.QueryEscape(wsToken.WSAccessToken)
-	log.Printf("[monitor] connecting to WebSocket: %s", wsToken.URI)
+	slog.Info("connecting to WebSocket", "component", "monitor", "uri", wsToken.URI)
 
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 	if err != nil {
@@ -126,7 +128,7 @@ func (m *Monitor) connectAndListen(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read connection details: %w", err)
 	}
-	log.Printf("[monitor] connected: %s", string(msg))
+	slog.Info("connected", "component", "monitor", "details", string(msg))
 
 	// Subscribe to team messaging post events
 	if err := m.subscribe(conn); err != nil {
@@ -134,7 +136,7 @@ func (m *Monitor) connectAndListen(ctx context.Context) error {
 	}
 
 	m.failures = 0
-	log.Println("[monitor] subscribed to post events, listening...")
+	slog.Info("subscribed to post events, listening...", "component", "monitor")
 
 	// Set up pong handler to extend read deadline on each pong received
 	conn.SetPongHandler(func(appData string) error {
@@ -230,12 +232,12 @@ func (m *Monitor) subscribe(conn *websocket.Conn) error {
 	if err != nil {
 		return fmt.Errorf("read subscription response: %w", err)
 	}
-	log.Printf("[monitor] subscription response: %s", string(resp))
+	slog.Debug("subscription response", "component", "monitor", "response", string(resp))
 	return nil
 }
 
 func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
-	log.Printf("[monitor] raw WS message: %s", string(msg))
+	slog.Debug("raw WS message", "component", "monitor", "message", string(msg))
 
 	// RingCentral WebSocket messages are JSON arrays: [header, body]
 	// Try to parse as array first, then extract the event from the second element.
@@ -245,53 +247,52 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 	if err := json.Unmarshal(msg, &arr); err == nil && len(arr) >= 2 {
 		// Parse the second element as the event
 		if err := json.Unmarshal(arr[1], &event); err != nil {
-			log.Printf("[monitor] failed to parse event from array: %v", err)
+			slog.Error("failed to parse event from array", "component", "monitor", "error", err)
 			return
 		}
 	} else if err := json.Unmarshal(msg, &event); err != nil {
 		// Fallback: try parsing as a single object
-		log.Printf("[monitor] ignoring non-event message: %v", err)
+		slog.Debug("ignoring non-event message", "component", "monitor", "error", err)
 		return
 	}
 
 	if event.Body.EventType == "" {
-		log.Printf("[monitor] ignoring message without eventType")
+		slog.Debug("ignoring message without eventType", "component", "monitor")
 		return
 	}
 
 	// Only process PostAdded events
 	if event.Body.EventType != "PostAdded" {
-		log.Printf("[monitor] ignoring event type: %s", event.Body.EventType)
+		slog.Debug("ignoring event type", "component", "monitor", "eventType", event.Body.EventType)
 		return
 	}
 
 	// Skip bot messages: check answer markers and known bot texts
 	if isBotMessage(event.Body.Text) {
-		log.Printf("[monitor] ignoring bot message (text match): %s", event.Body.ID)
+		slog.Debug("ignoring bot message (text match)", "component", "monitor", "postID", event.Body.ID)
 		return
 	}
 
 	// Fallback: skip posts tracked by ID (covers edge cases)
 	if m.IsSentPost(event.Body.ID) {
-		log.Printf("[monitor] ignoring bot's own post %s", event.Body.ID)
+		slog.Debug("ignoring bot's own post", "component", "monitor", "postID", event.Body.ID)
 		return
 	}
 
 	// Only process text messages
 	if event.Body.Type != "TextMessage" {
-		log.Printf("[monitor] ignoring non-text message type: %s", event.Body.Type)
+		slog.Debug("ignoring non-text message type", "component", "monitor", "type", event.Body.Type)
 		return
 	}
 
 	// Filter by chat ID if configured
 	chatID := m.client.ChatID()
 	if chatID != "" && event.Body.GroupID != chatID {
-		log.Printf("[monitor] ignoring message from chat %s (expected %s)", event.Body.GroupID, chatID)
+		slog.Debug("ignoring message from wrong chat", "component", "monitor", "chatID", event.Body.GroupID, "expectedChatID", chatID)
 		return
 	}
 
-	log.Printf("[monitor] received post from %s in chat %s: %q",
-		event.Body.CreatorID, event.Body.GroupID, truncate(event.Body.Text, 50))
+	slog.Info("received post", "component", "monitor", "creatorID", event.Body.CreatorID, "chatID", event.Body.GroupID, "text", truncate(event.Body.Text, 50))
 
 	go m.handler(ctx, m.client, event.Body)
 }
