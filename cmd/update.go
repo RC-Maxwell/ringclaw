@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -116,23 +115,28 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func getLatestVersion() (string, error) {
-	resp, err := http.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", githubRepo))
+	// Use HTTP redirect instead of API to avoid rate limits
+	client := &http.Client{
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Get(fmt.Sprintf("https://github.com/%s/releases/latest", githubRepo))
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GitHub API returned %d", resp.StatusCode)
+	loc := resp.Header.Get("Location")
+	if loc == "" {
+		return "", fmt.Errorf("no redirect from GitHub releases/latest")
 	}
-
-	var release struct {
-		TagName string `json:"tag_name"`
+	// Location: https://github.com/ringclaw/ringclaw/releases/tag/v0.0.3
+	parts := strings.Split(loc, "/tag/")
+	if len(parts) != 2 || parts[1] == "" {
+		return "", fmt.Errorf("unexpected redirect URL: %s", loc)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return "", err
-	}
-	return release.TagName, nil
+	return parts[1], nil
 }
 
 func downloadFile(url string) (string, error) {
