@@ -70,7 +70,10 @@ func ResolveChatTarget(ctx context.Context, client *ringcentral.Client, text str
 
 	// Search Teams by name
 	teamChats, err := client.ListChats(ctx, "Team")
-	if err == nil {
+	if err != nil {
+		log.Printf("[summarize] failed to list Team chats: %v", err)
+	} else {
+		log.Printf("[summarize] searching %d Team chats", len(teamChats.Records))
 		for _, chat := range teamChats.Records {
 			if fuzzyMatch(chat.Name, name) {
 				req.ChatID = chat.ID
@@ -83,7 +86,10 @@ func ResolveChatTarget(ctx context.Context, client *ringcentral.Client, text str
 
 	// Search Group chats by name
 	groupChats, err := client.ListChats(ctx, "Group")
-	if err == nil {
+	if err != nil {
+		log.Printf("[summarize] failed to list Group chats: %v", err)
+	} else {
+		log.Printf("[summarize] searching %d Group chats", len(groupChats.Records))
 		for _, chat := range groupChats.Records {
 			if fuzzyMatch(chat.Name, name) {
 				req.ChatID = chat.ID
@@ -96,14 +102,27 @@ func ResolveChatTarget(ctx context.Context, client *ringcentral.Client, text str
 
 	// Search Direct chats by member name
 	directChats, err := client.ListChats(ctx, "Direct")
-	if err == nil {
+	if err != nil {
+		log.Printf("[summarize] failed to list Direct chats: %v", err)
+	} else {
+		log.Printf("[summarize] searching %d Direct chats (members in each: looking up names)", len(directChats.Records))
+		ownerID := client.OwnerID()
 		for _, chat := range directChats.Records {
+			if len(chat.Members) == 0 {
+				log.Printf("[summarize]   chat %s has no members field", chat.ID)
+				continue
+			}
 			for _, memberID := range chat.Members {
+				if memberID == ownerID {
+					continue
+				}
 				person, perr := client.GetPersonInfo(ctx, memberID)
 				if perr != nil {
+					log.Printf("[summarize]   GetPersonInfo(%s) failed: %v", memberID, perr)
 					continue
 				}
 				fullName := strings.TrimSpace(person.FirstName + " " + person.LastName)
+				log.Printf("[summarize]   checking: %q (email=%s) vs %q", fullName, person.Email, name)
 				if fuzzyMatch(fullName, name) || fuzzyMatch(person.Email, name) {
 					req.ChatID = chat.ID
 					req.ChatName = fullName
