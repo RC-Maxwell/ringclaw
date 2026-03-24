@@ -181,6 +181,7 @@ func runMonitorWithRestart(ctx context.Context, client *ringcentral.Client, hand
 		log.Printf("[monitor] Starting WebSocket monitor...")
 
 		monitor := ringcentral.NewMonitor(client, handler.HandleMessage)
+		client.SetMonitor(monitor)
 		err := monitor.Run(ctx)
 
 		if ctx.Err() != nil {

@@ -26,16 +26,37 @@ type MessageHandler func(ctx context.Context, client *Client, post Post)
 
 // Monitor manages the WebSocket connection for receiving messages.
 type Monitor struct {
-	client   *Client
-	handler  MessageHandler
-	failures int
+	client    *Client
+	handler   MessageHandler
+	failures  int
+	sentPosts map[string]bool // track post IDs sent by bot to avoid loops
+	mu        sync.Mutex
+}
+
+// MarkSentPost records a post ID as sent by the bot.
+func (m *Monitor) MarkSentPost(id string) {
+	m.mu.Lock()
+	m.sentPosts[id] = true
+	// Keep map from growing unbounded
+	if len(m.sentPosts) > 1000 {
+		m.sentPosts = make(map[string]bool)
+	}
+	m.mu.Unlock()
+}
+
+// IsSentPost checks if a post was sent by the bot.
+func (m *Monitor) IsSentPost(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.sentPosts[id]
 }
 
 // NewMonitor creates a new WebSocket monitor.
 func NewMonitor(client *Client, handler MessageHandler) *Monitor {
 	return &Monitor{
-		client:  client,
-		handler: handler,
+		client:    client,
+		handler:   handler,
+		sentPosts: make(map[string]bool),
 	}
 }
 
@@ -228,9 +249,9 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 		return
 	}
 
-	// Skip messages from self
-	if event.Body.CreatorID == m.client.OwnerID() {
-		log.Printf("[monitor] ignoring self-message from %s", event.Body.CreatorID)
+	// Skip posts sent by the bot itself (prevents reply loops)
+	if m.IsSentPost(event.Body.ID) {
+		log.Printf("[monitor] ignoring bot's own post %s", event.Body.ID)
 		return
 	}
 

@@ -26,6 +26,19 @@ type Client struct {
 	auth       *Auth
 	httpClient *http.Client
 	ownerID    string
+	monitor    *Monitor
+}
+
+// SetMonitor links a monitor for tracking sent posts.
+func (c *Client) SetMonitor(m *Monitor) {
+	c.monitor = m
+}
+
+// markSentPost records a post ID as sent by the bot.
+func (c *Client) markSentPost(id string) {
+	if c.monitor != nil {
+		c.monitor.MarkSentPost(id)
+	}
 }
 
 // NewClient creates a new RingCentral API client.
@@ -91,6 +104,7 @@ func (c *Client) SendPost(ctx context.Context, chatID, text string) (*Post, erro
 	if err := json.Unmarshal(respBody, &post); err != nil {
 		return nil, fmt.Errorf("parse post response: %w", err)
 	}
+	c.markSentPost(post.ID)
 	return &post, nil
 }
 
