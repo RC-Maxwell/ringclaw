@@ -68,11 +68,43 @@ func ResolveChatTarget(ctx context.Context, client *ringcentral.Client, text str
 
 	log.Printf("[summarize] fuzzy searching for %q", name)
 
-	// Fetch all chat types in one pass and match by name.
-	// RingCentral populates the Name field for all chat types:
-	// - Direct: the other person's display name
-	// - Team/Group: the team/group name
-	for _, chatType := range []string{"Direct", "Team", "Group"} {
+	// Search Direct chats: Name may be empty, fall back to member lookup
+	directChats, err := client.ListChats(ctx, "Direct")
+	if err != nil {
+		log.Printf("[summarize] failed to list Direct chats: %v", err)
+	} else {
+		log.Printf("[summarize] searching %d Direct chats", len(directChats.Records))
+		ownerID := client.OwnerID()
+		for _, chat := range directChats.Records {
+			// Try Name field first
+			if chat.Name != "" && fuzzyMatch(chat.Name, name) {
+				req.ChatID = chat.ID
+				req.ChatName = chat.Name
+				log.Printf("[summarize] matched Direct chat by name %q (id=%s)", chat.Name, chat.ID)
+				return req, nil
+			}
+			// Fall back: look up the other member's name
+			for _, m := range chat.Members {
+				if m.ID == ownerID || strings.HasPrefix(m.ID, "glip-") {
+					continue
+				}
+				person, perr := client.GetPersonInfo(ctx, m.ID)
+				if perr != nil {
+					continue
+				}
+				fullName := strings.TrimSpace(person.FirstName + " " + person.LastName)
+				if fuzzyMatch(fullName, name) || fuzzyMatch(person.Email, name) {
+					req.ChatID = chat.ID
+					req.ChatName = fullName
+					log.Printf("[summarize] matched Direct chat by member %q (id=%s)", fullName, chat.ID)
+					return req, nil
+				}
+			}
+		}
+	}
+
+	// Search Team and Group chats by name
+	for _, chatType := range []string{"Team", "Group"} {
 		chats, err := client.ListChats(ctx, chatType)
 		if err != nil {
 			log.Printf("[summarize] failed to list %s chats: %v", chatType, err)
