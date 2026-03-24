@@ -14,11 +14,11 @@ import (
 
 var summarizeKeywords = []string{"总结", "summarize", "summary"}
 
-// IsSummarizeCommand checks if the text is a summarize request.
+// IsSummarizeCommand checks if the text starts with a summarize keyword.
 func IsSummarizeCommand(text string) bool {
-	lower := strings.ToLower(text)
+	lower := strings.ToLower(strings.TrimSpace(text))
 	for _, kw := range summarizeKeywords {
-		if strings.Contains(lower, kw) {
+		if strings.HasPrefix(lower, kw) {
 			return true
 		}
 	}
