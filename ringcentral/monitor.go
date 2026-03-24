@@ -198,11 +198,21 @@ func (m *Monitor) subscribe(conn *websocket.Conn) error {
 }
 
 func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
-	// Log all incoming WebSocket messages for debugging
 	log.Printf("[monitor] raw WS message: %s", string(msg))
 
+	// RingCentral WebSocket messages are JSON arrays: [header, body]
+	// Try to parse as array first, then extract the event from the second element.
 	var event WSEvent
-	if err := json.Unmarshal(msg, &event); err != nil {
+
+	var arr []json.RawMessage
+	if err := json.Unmarshal(msg, &arr); err == nil && len(arr) >= 2 {
+		// Parse the second element as the event
+		if err := json.Unmarshal(arr[1], &event); err != nil {
+			log.Printf("[monitor] failed to parse event from array: %v", err)
+			return
+		}
+	} else if err := json.Unmarshal(msg, &event); err != nil {
+		// Fallback: try parsing as a single object
 		log.Printf("[monitor] ignoring non-event message: %v", err)
 		return
 	}
