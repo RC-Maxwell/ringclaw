@@ -58,9 +58,8 @@ type PersonInfo struct {
 
 // ListPostsOpts holds query parameters for ListPosts.
 type ListPostsOpts struct {
-	RecordCount      int
-	CreationTimeFrom string
-	CreationTimeTo   string
+	RecordCount int
+	PageToken   string
 }
 
 // CreatePostRequest is the body for creating a post.

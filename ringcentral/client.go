@@ -155,7 +155,8 @@ func (c *Client) UploadFile(ctx context.Context, chatID, fileName string, fileDa
 	return &files[0], nil
 }
 
-// ListPosts fetches posts from a chat with optional filters.
+// ListPosts fetches posts from a chat.
+// Note: RingCentral API only supports recordCount and pageToken, not time filters.
 func (c *Client) ListPosts(ctx context.Context, chatID string, opts ListPostsOpts) (*PostList, error) {
 	params := url.Values{}
 	if opts.RecordCount > 0 {
@@ -163,11 +164,8 @@ func (c *Client) ListPosts(ctx context.Context, chatID string, opts ListPostsOpt
 	} else {
 		params.Set("recordCount", "250")
 	}
-	if opts.CreationTimeFrom != "" {
-		params.Set("creationTimeFrom", opts.CreationTimeFrom)
-	}
-	if opts.CreationTimeTo != "" {
-		params.Set("creationTimeTo", opts.CreationTimeTo)
+	if opts.PageToken != "" {
+		params.Set("pageToken", opts.PageToken)
 	}
 
 	path := fmt.Sprintf("/team-messaging/v1/chats/%s/posts?%s", chatID, params.Encode())

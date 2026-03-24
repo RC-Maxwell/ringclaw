@@ -138,9 +138,10 @@ func ResolveChatTarget(ctx context.Context, client *ringcentral.Client, text str
 
 // BuildSummaryPrompt fetches chat messages and builds a prompt for the agent.
 func BuildSummaryPrompt(ctx context.Context, client *ringcentral.Client, req *SummarizeRequest) (string, error) {
+	// RingCentral List Posts API does not support time filters,
+	// so we fetch max records and filter by time client-side.
 	opts := ringcentral.ListPostsOpts{
-		RecordCount:      250,
-		CreationTimeFrom: req.TimeFrom.UTC().Format(time.RFC3339),
+		RecordCount: 250,
 	}
 
 	posts, err := client.ListPosts(ctx, req.ChatID, opts)
@@ -149,7 +150,7 @@ func BuildSummaryPrompt(ctx context.Context, client *ringcentral.Client, req *Su
 	}
 
 	if len(posts.Records) == 0 {
-		return "", fmt.Errorf("no messages found in the specified time range")
+		return "", fmt.Errorf("no messages found")
 	}
 
 	// Resolve person names (with cache)
@@ -172,19 +173,27 @@ func BuildSummaryPrompt(ctx context.Context, client *ringcentral.Client, req *Su
 	}
 
 	// Posts are returned newest-first, reverse for chronological order
+	// Filter by time range client-side
+	timeFrom := req.TimeFrom.UTC()
 	var lines []string
 	for i := len(posts.Records) - 1; i >= 0; i-- {
 		p := posts.Records[i]
 		if p.Text == "" {
 			continue
 		}
-		t, _ := time.Parse(time.RFC3339, p.CreationTime)
+		t, err := time.Parse(time.RFC3339, p.CreationTime)
+		if err != nil {
+			continue
+		}
+		if t.Before(timeFrom) {
+			continue
+		}
 		name := resolveName(p.CreatorID)
 		lines = append(lines, fmt.Sprintf("[%s] %s: %s", t.Format("15:04"), name, p.Text))
 	}
 
 	if len(lines) == 0 {
-		return "", fmt.Errorf("no text messages found in the specified time range")
+		return "", fmt.Errorf("no messages found in the specified time range (since %s)", req.TimeFrom.Format("2006-01-02 15:04"))
 	}
 
 	chatLabel := req.ChatName
