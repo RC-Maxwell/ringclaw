@@ -301,8 +301,87 @@ END_ACTION`
 	}
 }
 
+func TestParseAgentActions_Card(t *testing.T) {
+	reply := `Here is a progress card.
+
+ACTION:CARD
+{
+  "type": "AdaptiveCard",
+  "version": "1.3",
+  "body": [
+    {"type": "TextBlock", "text": "Project Status", "weight": "bolder"},
+    {"type": "FactSet", "facts": [{"title": "Sprint", "value": "42"}]}
+  ]
+}
+END_ACTION`
+
+	clean, actions := ParseAgentActions(reply)
+	if !strings.Contains(clean, "progress card") {
+		t.Errorf("clean reply should contain main text, got %q", clean)
+	}
+	if strings.Contains(clean, "ACTION:") {
+		t.Errorf("clean reply should not contain ACTION block")
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	if actions[0].Type != "CARD" {
+		t.Errorf("expected CARD, got %s", actions[0].Type)
+	}
+	if !strings.Contains(actions[0].Body, "AdaptiveCard") {
+		t.Errorf("body should contain AdaptiveCard JSON, got %q", actions[0].Body)
+	}
+	// Validate JSON
+	if !json.Valid([]byte(actions[0].Body)) {
+		t.Errorf("body should be valid JSON, got %q", actions[0].Body)
+	}
+}
+
+func TestParseAgentActions_CardWithNoteCombo(t *testing.T) {
+	reply := `Done.
+
+ACTION:NOTE title=Meeting Notes
+content
+END_ACTION
+
+ACTION:CARD
+{"type":"AdaptiveCard","version":"1.3","body":[{"type":"TextBlock","text":"Hello"}]}
+END_ACTION`
+
+	clean, actions := ParseAgentActions(reply)
+	if clean != "Done." {
+		t.Errorf("expected 'Done.', got %q", clean)
+	}
+	if len(actions) != 2 {
+		t.Fatalf("expected 2 actions, got %d", len(actions))
+	}
+	if actions[0].Type != "NOTE" {
+		t.Errorf("expected NOTE, got %s", actions[0].Type)
+	}
+	if actions[1].Type != "CARD" {
+		t.Errorf("expected CARD, got %s", actions[1].Type)
+	}
+}
+
+func TestIsActionCommand_Card(t *testing.T) {
+	tests := []struct {
+		text string
+		want bool
+	}{
+		{"/card get abc123", true},
+		{"/card delete abc123", true},
+		{"/card", true},
+		{"/cards", false},
+	}
+	for _, tt := range tests {
+		if got := IsActionCommand(tt.text); got != tt.want {
+			t.Errorf("IsActionCommand(%q) = %v, want %v", tt.text, got, tt.want)
+		}
+	}
+}
+
 func TestFormatActionHelp(t *testing.T) {
-	for _, cmd := range []string{"/task", "/note", "/event"} {
+	for _, cmd := range []string{"/task", "/note", "/event", "/card"} {
 		help := formatActionHelp(cmd)
 		if help == "" {
 			t.Errorf("formatActionHelp(%q) returned empty string", cmd)
@@ -311,5 +390,43 @@ func TestFormatActionHelp(t *testing.T) {
 	help := formatActionHelp("/unknown")
 	if help == "" {
 		t.Error("formatActionHelp(/unknown) returned empty string")
+	}
+}
+
+func TestExtractChatID(t *testing.T) {
+	tests := []struct {
+		input, want string
+	}{
+		{"12345", "12345"},
+		{"![:Team](137158549510)", "137158549510"},
+		{"![:Person](608081020)", "608081020"},
+		{" 12345 ", "12345"},
+	}
+	for _, tt := range tests {
+		if got := extractChatID(tt.input); got != tt.want {
+			t.Errorf("extractChatID(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestParseAgentActions_CardWithChatID(t *testing.T) {
+	reply := `Card sent.
+
+ACTION:CARD chatid=137158549510
+{"type":"AdaptiveCard","version":"1.3","body":[{"type":"TextBlock","text":"Hello"}]}
+END_ACTION`
+
+	clean, actions := ParseAgentActions(reply)
+	if clean != "Card sent." {
+		t.Errorf("expected 'Card sent.', got %q", clean)
+	}
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	if actions[0].Type != "CARD" {
+		t.Errorf("expected CARD, got %s", actions[0].Type)
+	}
+	if actions[0].Params["chatid"] != "137158549510" {
+		t.Errorf("expected chatid '137158549510', got %q", actions[0].Params["chatid"])
 	}
 }
