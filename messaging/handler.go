@@ -233,7 +233,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ringcentral.Client,
 	slog.Info("received message", "component", "handler", "creatorID", post.CreatorID, "chatID", chatID, "text", truncate(text, 80))
 
 	// Built-in commands (no typing needed)
-	if text == "/status" {
+	if text == "/info" || text == "/status" {
 		reply := h.buildStatus()
 		if err := SendTextReply(ctx, client, chatID, reply); err != nil {
 			slog.Error("failed to send reply", "component", "handler", "error", err)
@@ -648,7 +648,7 @@ func buildHelpText() string {
 @a @b msg - Broadcast to multiple agents
 /new or /clear - Start a new session
 /cwd /path - Switch workspace directory
-/status - Show current agent info
+/info - Show current agent info
 /help - Show this help message
 
 /task list|create|get|update|delete|complete

@@ -146,8 +146,8 @@ func TestBuildHelpText(t *testing.T) {
 	if text == "" {
 		t.Error("help text is empty")
 	}
-	if !containsStr(text, "@agent") {
-		t.Error("help text should mention @agent")
+	if !containsStr(text, "/info") {
+		t.Error("help text should mention /info")
 	}
 }
 
