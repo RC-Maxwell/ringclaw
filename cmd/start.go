@@ -158,11 +158,40 @@ func runStart(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	// Initialize bot client if configured
+	var botClient *ringcentral.Client
+	var botDMChatID string
+	if cfg.RC.BotToken != "" {
+		slog.Info("initializing bot client...")
+		botClient = ringcentral.NewBotClient(cfg.RC.ServerURL, cfg.RC.BotToken)
+		botOwnerID, err := botClient.GetExtensionInfo(ctx)
+		if err != nil {
+			slog.Warn("failed to get bot extension info", "error", err)
+		} else {
+			botClient.SetOwnerID(botOwnerID)
+			slog.Info("bot extension ID resolved", "botOwnerID", botOwnerID)
+		}
+		// Find the DM chat between the bot and the installer (private app user)
+		if ownerID != "" {
+			dmChatID, err := botClient.FindDirectChat(ctx, ownerID)
+			if err != nil {
+				slog.Warn("failed to find bot DM chat with installer", "error", err)
+			} else {
+				botDMChatID = dmChatID
+				slog.Info("bot DM chat resolved", "chatID", botDMChatID)
+			}
+		}
+	}
+
 	// Start WebSocket monitor
 	slog.Info("starting message bridge", "chatID", cfg.RC.ChatID)
 
 	// Monitor.Run handles reconnection with backoff internally
 	monitor := ringcentral.NewMonitor(client, handler.HandleMessage)
+	if botClient != nil {
+		monitor.SetBotClient(botClient, botDMChatID, cfg.RC.BotChats)
+		botClient.SetMonitor(monitor)
+	}
 	client.SetMonitor(monitor)
 	if err := monitor.Run(ctx); err != nil && ctx.Err() == nil {
 		slog.Error("monitor stopped unexpectedly", "component", "monitor", "error", err)

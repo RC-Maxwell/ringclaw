@@ -28,6 +28,9 @@ type MessageHandler func(ctx context.Context, client *Client, post Post)
 // Monitor manages the WebSocket connection for receiving messages.
 type Monitor struct {
 	client      *Client
+	botClient   *Client
+	botDMChatID string
+	botChatIDs  map[string]bool
 	handler     MessageHandler
 	failures    int
 	sentPosts   map[string]time.Time // post ID -> timestamp
@@ -83,6 +86,33 @@ func NewMonitor(client *Client, handler MessageHandler) *Monitor {
 		handler:   handler,
 		sentPosts: make(map[string]time.Time),
 	}
+}
+
+// SetBotClient configures a bot client for routing replies.
+// dmChatID is the default DM chat between the bot and the installer.
+// extraChatIDs are additional chat IDs where the bot should reply.
+func (m *Monitor) SetBotClient(bot *Client, dmChatID string, extraChatIDs []string) {
+	m.botClient = bot
+	m.botDMChatID = dmChatID
+	m.botChatIDs = make(map[string]bool, len(extraChatIDs))
+	for _, id := range extraChatIDs {
+		m.botChatIDs[id] = true
+	}
+}
+
+// chooseClient returns the bot client if the chat is in the bot's
+// allowed list, otherwise returns the private app client.
+func (m *Monitor) chooseClient(chatID string) *Client {
+	if m.botClient == nil {
+		return m.client
+	}
+	if chatID == m.botDMChatID {
+		return m.botClient
+	}
+	if m.botChatIDs[chatID] {
+		return m.botClient
+	}
+	return m.client
 }
 
 // Run starts the WebSocket event loop with automatic reconnection.
@@ -299,9 +329,16 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 		return
 	}
 
+	// Skip messages from the bot's own extension
+	if m.botClient != nil && event.Body.CreatorID == m.botClient.OwnerID() {
+		slog.Debug("ignoring bot client's own post", "component", "monitor", "postID", event.Body.ID)
+		return
+	}
+
 	slog.Info("received post", "component", "monitor", "creatorID", event.Body.CreatorID, "chatID", event.Body.GroupID, "text", truncate(event.Body.Text, 50))
 
-	go m.handler(ctx, m.client, event.Body)
+	replyClient := m.chooseClient(event.Body.GroupID)
+	go m.handler(ctx, replyClient, event.Body)
 }
 
 func (m *Monitor) calcBackoff() time.Duration {

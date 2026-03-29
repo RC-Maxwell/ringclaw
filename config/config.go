@@ -17,11 +17,13 @@ type Config struct {
 
 // RCConfig holds RingCentral connection configuration.
 type RCConfig struct {
-	ClientID     string `json:"client_id,omitempty"`
-	ClientSecret string `json:"client_secret,omitempty"`
-	JWTToken     string `json:"jwt_token,omitempty"`
-	ChatID       string `json:"chat_id,omitempty"`
-	ServerURL    string `json:"server_url,omitempty"`
+	ClientID     string   `json:"client_id,omitempty"`
+	ClientSecret string   `json:"client_secret,omitempty"`
+	JWTToken     string   `json:"jwt_token,omitempty"`
+	ChatID       string   `json:"chat_id,omitempty"`
+	ServerURL    string   `json:"server_url,omitempty"`
+	BotToken     string   `json:"bot_token,omitempty"`
+	BotChats     []string `json:"bot_chats,omitempty"`
 }
 
 // AgentConfig holds configuration for a single agent.
@@ -117,6 +119,9 @@ func loadEnv(cfg *Config) {
 	}
 	if v := os.Getenv("RC_SERVER_URL"); v != "" {
 		cfg.RC.ServerURL = v
+	}
+	if v := os.Getenv("RC_BOT_TOKEN"); v != "" {
+		cfg.RC.BotToken = v
 	}
 }
 

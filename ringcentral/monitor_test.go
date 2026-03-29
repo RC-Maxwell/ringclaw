@@ -235,6 +235,129 @@ func TestMonitor_HandleWSMessage_IgnoreSentPost(t *testing.T) {
 	}
 }
 
+func TestMonitor_ChooseClient_NoBotClient(t *testing.T) {
+	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
+	got := m.chooseClient("any-chat")
+	if got != m.client {
+		t.Error("without bot client, should always return private client")
+	}
+}
+
+func TestMonitor_ChooseClient_BotDM(t *testing.T) {
+	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
+	bot := NewBotClient("", "fake-bot-token")
+	m.SetBotClient(bot, "dm-chat-123", nil)
+
+	got := m.chooseClient("dm-chat-123")
+	if got != bot {
+		t.Error("bot DM chat should use bot client")
+	}
+
+	got = m.chooseClient("other-chat")
+	if got != m.client {
+		t.Error("non-DM chat should use private client")
+	}
+}
+
+func TestMonitor_ChooseClient_ExtraChats(t *testing.T) {
+	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
+	bot := NewBotClient("", "fake-bot-token")
+	m.SetBotClient(bot, "dm-chat-123", []string{"group-1", "group-2"})
+
+	if m.chooseClient("group-1") != bot {
+		t.Error("group-1 should use bot client")
+	}
+	if m.chooseClient("group-2") != bot {
+		t.Error("group-2 should use bot client")
+	}
+	if m.chooseClient("group-3") != m.client {
+		t.Error("group-3 should use private client")
+	}
+}
+
+func TestMonitor_HandleWSMessage_IgnoreBotClientPost(t *testing.T) {
+	var called bool
+	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {
+		called = true
+	})
+	bot := NewBotClient("", "fake-bot-token")
+	bot.SetOwnerID("bot-ext-123")
+	m.SetBotClient(bot, "dm-chat", nil)
+
+	msg := makeWSMessage(Post{
+		ID:        "p99",
+		GroupID:   "dm-chat",
+		Type:      "TextMessage",
+		Text:      "bot reply",
+		CreatorID: "bot-ext-123",
+		EventType: "PostAdded",
+	})
+
+	m.handleWSMessage(context.Background(), msg)
+	time.Sleep(50 * time.Millisecond)
+
+	if called {
+		t.Error("handler should not be called for bot client's own messages")
+	}
+}
+
+func TestMonitor_HandleWSMessage_BotRouting(t *testing.T) {
+	var receivedClient *Client
+	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {
+		receivedClient = client
+	})
+	bot := NewBotClient("", "fake-bot-token")
+	bot.SetOwnerID("bot-ext-123")
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"})
+
+	// Message in bot DM -> should route to bot client
+	msg := makeWSMessage(Post{
+		ID:        "p100",
+		GroupID:   "dm-chat",
+		Type:      "TextMessage",
+		Text:      "hello",
+		CreatorID: "user-1",
+		EventType: "PostAdded",
+	})
+	m.handleWSMessage(context.Background(), msg)
+	time.Sleep(50 * time.Millisecond)
+	if receivedClient != bot {
+		t.Error("DM chat should route to bot client")
+	}
+
+	// Message in group-1 -> should route to bot client
+	receivedClient = nil
+	msg = makeWSMessage(Post{
+		ID:        "p101",
+		GroupID:   "group-1",
+		Type:      "TextMessage",
+		Text:      "hello",
+		CreatorID: "user-1",
+		EventType: "PostAdded",
+	})
+	m.handleWSMessage(context.Background(), msg)
+	time.Sleep(50 * time.Millisecond)
+	if receivedClient != bot {
+		t.Error("group-1 should route to bot client")
+	}
+
+	// Message in random-chat -> should route to private client
+	receivedClient = nil
+	msg = makeWSMessage(Post{
+		ID:        "p102",
+		GroupID:   "random-chat",
+		Type:      "TextMessage",
+		Text:      "hello",
+		CreatorID: "user-1",
+		EventType: "PostAdded",
+	})
+	m.handleWSMessage(context.Background(), msg)
+	time.Sleep(50 * time.Millisecond)
+	if receivedClient != m.client {
+		t.Error("random-chat should route to private client")
+	}
+}
+
 func TestTruncate(t *testing.T) {
 	tests := []struct {
 		s    string

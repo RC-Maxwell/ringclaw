@@ -63,6 +63,30 @@ func NewClient(creds *Credentials) *Client {
 	}
 }
 
+// NewBotClient creates a Client that uses a static bot access token
+// (obtained from the RC Developer Console when installing a private bot).
+// Bot tokens are long-lived and don't require JWT refresh.
+func NewBotClient(serverURL, botToken string) *Client {
+	if serverURL == "" {
+		serverURL = defaultServerURL
+	}
+	auth := NewAuth("", "", "", serverURL)
+	// Set the bot token with a far-future expiry so AccessToken() never triggers refresh
+	auth.SetTokenForTest(botToken, time.Now().Add(365*24*time.Hour))
+	return &Client{
+		serverURL: serverURL,
+		auth:      auth,
+		httpClient: &http.Client{
+			Timeout: requestTimeout,
+			Transport: &http.Transport{
+				MaxIdleConns:        20,
+				MaxIdleConnsPerHost: 10,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+	}
+}
+
 // Authenticate performs JWT authentication. Must be called before other methods.
 func (c *Client) Authenticate() error {
 	return c.auth.Authenticate()
@@ -284,6 +308,16 @@ func (c *Client) GetExtensionInfo(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parse extension info: %w", err)
 	}
 	return fmt.Sprintf("%d", info.ID), nil
+}
+
+// FindDirectChat finds or creates a Direct (1:1) chat between the current
+// user and the given person. Returns the chat ID.
+func (c *Client) FindDirectChat(ctx context.Context, personID string) (string, error) {
+	chat, err := c.CreateConversation(ctx, []string{personID})
+	if err != nil {
+		return "", fmt.Errorf("find direct chat: %w", err)
+	}
+	return chat.ID, nil
 }
 
 // --- Task CRUD ---
