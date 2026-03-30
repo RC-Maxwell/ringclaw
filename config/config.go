@@ -22,8 +22,18 @@ type RCConfig struct {
 	JWTToken     string   `json:"jwt_token,omitempty"`
 	ChatID       string   `json:"chat_id,omitempty"`
 	ServerURL    string   `json:"server_url,omitempty"`
-	BotToken     string   `json:"bot_token,omitempty"`
-	BotChats     []string `json:"bot_chats,omitempty"`
+	BotToken       string   `json:"bot_token,omitempty"`
+	BotChats       []string `json:"bot_chats,omitempty"`
+	BotMentionOnly *bool    `json:"bot_mention_only,omitempty"`
+}
+
+// IsBotMentionOnly returns whether the bot requires @mention in group chats.
+// Defaults to true if not explicitly set.
+func (rc RCConfig) IsBotMentionOnly() bool {
+	if rc.BotMentionOnly == nil {
+		return true
+	}
+	return *rc.BotMentionOnly
 }
 
 // AgentConfig holds configuration for a single agent.

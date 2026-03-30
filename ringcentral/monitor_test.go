@@ -246,7 +246,7 @@ func TestMonitor_ChooseClient_NoBotClient(t *testing.T) {
 func TestMonitor_ChooseClient_BotDM(t *testing.T) {
 	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
 	bot := NewBotClient("", "fake-bot-token")
-	m.SetBotClient(bot, "dm-chat-123", nil)
+	m.SetBotClient(bot, "dm-chat-123", nil, true)
 
 	got := m.chooseClient("dm-chat-123")
 	if got != bot {
@@ -262,7 +262,7 @@ func TestMonitor_ChooseClient_BotDM(t *testing.T) {
 func TestMonitor_ChooseClient_ExtraChats(t *testing.T) {
 	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
 	bot := NewBotClient("", "fake-bot-token")
-	m.SetBotClient(bot, "dm-chat-123", []string{"group-1", "group-2"})
+	m.SetBotClient(bot, "dm-chat-123", []string{"group-1", "group-2"}, true)
 
 	if m.chooseClient("group-1") != bot {
 		t.Error("group-1 should use bot client")
@@ -285,7 +285,7 @@ func TestMonitor_HandleWSMessage_IgnoreBotClientPost(t *testing.T) {
 	})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", nil)
+	m.SetBotClient(bot, "dm-chat", nil, true)
 
 	msg := makeWSMessage(Post{
 		ID:        "p99",
@@ -316,7 +316,7 @@ func TestMonitor_HandleWSMessage_BotRouting(t *testing.T) {
 	})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", []string{"group-1"})
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"}, true)
 
 	// Message in bot DM -> should route to bot client
 	msg := makeWSMessage(Post{
@@ -404,7 +404,7 @@ func TestMonitor_HandleWSMessage_PrivateOwnerFiltered(t *testing.T) {
 func TestMonitor_SetBotClient_EmptyExtraChats(t *testing.T) {
 	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
 	bot := NewBotClient("", "fake-token")
-	m.SetBotClient(bot, "dm-chat", nil)
+	m.SetBotClient(bot, "dm-chat", nil, true)
 
 	if m.botChatIDs == nil {
 		t.Error("botChatIDs should be initialized even with nil input")
@@ -430,7 +430,7 @@ func TestMonitor_GroupChat_RequiresMention(t *testing.T) {
 	})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", []string{"group-1"})
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"}, true)
 
 	// Message in group-1 WITHOUT mention -> should be ignored
 	msg := makeWSMessage(Post{
@@ -461,7 +461,7 @@ func TestMonitor_GroupChat_WithMention(t *testing.T) {
 	})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", []string{"group-1"})
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"}, true)
 
 	// Message in group-1 WITH bot mention -> should be processed
 	msg := makeWSMessage(Post{
@@ -493,7 +493,7 @@ func TestMonitor_GroupChat_WrongMention(t *testing.T) {
 	})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", []string{"group-1"})
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"}, true)
 
 	// Message in group-1 mentioning someone else -> should be ignored
 	msg := makeWSMessage(Post{
@@ -525,7 +525,7 @@ func TestMonitor_DM_NoMentionRequired(t *testing.T) {
 	})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", []string{"group-1"})
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"}, true)
 
 	// Message in DM without mention -> should still be processed
 	msg := makeWSMessage(Post{
@@ -550,7 +550,7 @@ func TestMonitor_IsBotMentioned(t *testing.T) {
 	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {})
 	bot := NewBotClient("", "fake-bot-token")
 	bot.SetOwnerID("bot-ext-123")
-	m.SetBotClient(bot, "dm-chat", nil)
+	m.SetBotClient(bot, "dm-chat", nil, true)
 
 	tests := []struct {
 		name     string
@@ -570,6 +570,37 @@ func TestMonitor_IsBotMentioned(t *testing.T) {
 				t.Errorf("isBotMentioned() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestMonitor_GroupChat_MentionOnlyDisabled(t *testing.T) {
+	var mu sync.Mutex
+	var receivedClient *Client
+	m := newTestMonitor("", func(ctx context.Context, client *Client, post Post) {
+		mu.Lock()
+		receivedClient = client
+		mu.Unlock()
+	})
+	bot := NewBotClient("", "fake-bot-token")
+	bot.SetOwnerID("bot-ext-123")
+	m.SetBotClient(bot, "dm-chat", []string{"group-1"}, false)
+
+	// Message in group-1 WITHOUT mention -> should still be processed
+	msg := makeWSMessage(Post{
+		ID:        "p400",
+		GroupID:   "group-1",
+		Type:      "TextMessage",
+		Text:      "hello everyone",
+		CreatorID: "user-1",
+		EventType: "PostAdded",
+	})
+	m.handleWSMessage(context.Background(), msg)
+	time.Sleep(50 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if receivedClient != bot {
+		t.Error("with bot_mention_only=false, group message without mention should be processed by bot")
 	}
 }
 

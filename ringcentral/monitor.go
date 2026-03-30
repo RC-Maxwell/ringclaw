@@ -28,9 +28,10 @@ type MessageHandler func(ctx context.Context, client *Client, post Post)
 // Monitor manages the WebSocket connection for receiving messages.
 type Monitor struct {
 	client      *Client
-	botClient   *Client
-	botDMChatID string
-	botChatIDs  map[string]bool
+	botClient      *Client
+	botDMChatID    string
+	botChatIDs     map[string]bool
+	botMentionOnly bool
 	handler     MessageHandler
 	failures    int
 	sentPosts   map[string]time.Time // post ID -> timestamp
@@ -91,9 +92,11 @@ func NewMonitor(client *Client, handler MessageHandler) *Monitor {
 // SetBotClient configures a bot client for routing replies.
 // dmChatID is the default DM chat between the bot and the installer.
 // extraChatIDs are additional chat IDs where the bot should reply.
-func (m *Monitor) SetBotClient(bot *Client, dmChatID string, extraChatIDs []string) {
+// mentionOnly controls whether group chats require @mention (default true).
+func (m *Monitor) SetBotClient(bot *Client, dmChatID string, extraChatIDs []string, mentionOnly bool) {
 	m.botClient = bot
 	m.botDMChatID = dmChatID
+	m.botMentionOnly = mentionOnly
 	m.botChatIDs = make(map[string]bool, len(extraChatIDs))
 	for _, id := range extraChatIDs {
 		m.botChatIDs[id] = true
@@ -337,8 +340,8 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 
 	replyClient := m.chooseClient(event.Body.GroupID)
 
-	// In group chats routed to the bot, only respond when the bot is @mentioned
-	if replyClient == m.botClient && event.Body.GroupID != m.botDMChatID {
+	// In group chats routed to the bot, only respond when the bot is @mentioned (if enabled)
+	if m.botMentionOnly && replyClient == m.botClient && event.Body.GroupID != m.botDMChatID {
 		if !m.isBotMentioned(event.Body.Mentions) {
 			slog.Debug("ignoring group message without bot mention", "component", "monitor", "chatID", event.Body.GroupID)
 			return

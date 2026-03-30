@@ -189,7 +189,7 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Monitor.Run handles reconnection with backoff internally
 	monitor := ringcentral.NewMonitor(client, handler.HandleMessage)
 	if botClient != nil {
-		monitor.SetBotClient(botClient, botDMChatID, cfg.RC.BotChats)
+		monitor.SetBotClient(botClient, botDMChatID, cfg.RC.BotChats, cfg.RC.IsBotMentionOnly())
 		botClient.SetMonitor(monitor)
 	}
 	client.SetMonitor(monitor)
