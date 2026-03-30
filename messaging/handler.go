@@ -287,6 +287,11 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ringcentral.Client,
 
 	// Summarize command -- use readClient (private app) for reading other chats
 	if IsSummarizeCommand(text) {
+		// Block in group chats via bot -- would leak private data to the group
+		if client.IsBot() && readClient != client {
+			_ = SendTextReply(ctx, client, chatID, "This command can only be used in a direct message with the bot.")
+			return
+		}
 		h.handleSummarize(ctx, client, readClient, post)
 		return
 	}
