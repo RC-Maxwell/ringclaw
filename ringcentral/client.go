@@ -171,6 +171,13 @@ func (c *Client) UpdatePost(ctx context.Context, chatID, postID, text string) (*
 	return &post, nil
 }
 
+// DeletePost deletes a post by ID.
+func (c *Client) DeletePost(ctx context.Context, chatID, postID string) error {
+	path := fmt.Sprintf("/team-messaging/v1/chats/%s/posts/%s", chatID, postID)
+	_, err := c.doRequest(ctx, http.MethodDelete, path, "", nil)
+	return err
+}
+
 // UploadFile uploads a file to a chat.
 func (c *Client) UploadFile(ctx context.Context, chatID, fileName string, fileData []byte) (*FileUploadResponse, error) {
 	ct := inferContentType(fileName)
