@@ -84,7 +84,7 @@ func (m *Monitor) IsSentPost(id string) bool {
 }
 
 // NewMonitor creates a new WebSocket monitor.
-// chatIDs limits which chats are monitored; empty means all chats.
+// chatIDs limits which chats are monitored; empty means no chats.
 func NewMonitor(client *Client, handler MessageHandler, chatIDs []string) *Monitor {
 	allowed := make(map[string]bool, len(chatIDs))
 	for _, id := range chatIDs {
@@ -334,8 +334,8 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 		return
 	}
 
-	// Filter by allowed chat IDs if configured
-	if len(m.allowedChatIDs) > 0 && !m.allowedChatIDs[event.Body.GroupID] {
+	// Filter by allowed chat IDs (empty = reject all)
+	if !m.allowedChatIDs[event.Body.GroupID] {
 		slog.Debug("ignoring message from non-allowed chat", "component", "monitor", "chatID", event.Body.GroupID)
 		return
 	}
