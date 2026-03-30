@@ -36,11 +36,50 @@ That's it. On first start, RingClaw will:
 
 ### RingCentral Setup
 
-1. Go to [RingCentral Developer Portal](https://developers.ringcentral.com/) and register an app
-2. Enable the `Team Messaging` and `WebSocketsSubscription` scopes
-3. Create a JWT credential under your app
-4. Find the chat IDs of the conversations you want the bot to monitor (use the [API Explorer](https://developers.ringcentral.com/api-reference/Chats/listGlipChatsNew) to list chats)
-5. (Optional) Create a **Bot App** for group interactions — see [Bot Client](#bot-client) below
+> **Tip:** After creating your apps, run `ringclaw setup` for an interactive wizard that collects credentials, validates them, and saves the config file.
+
+#### Step 1: Create a Private App (Required)
+
+1. Go to [RingCentral Developer Console](https://developers.ringcentral.com/console) and sign in
+2. Click **Register App** → select **REST API App**
+3. Configure the app:
+   - **Auth**: JWT auth flow
+   - **Security** → App Scopes: check **ReadAccounts**, **TeamMessaging**, **WebSocketsSubscription**
+   - **Access**: Private (only your own account)
+4. Click **Create** — you'll get a **Client ID** and **Client Secret**
+5. Go to **Credentials** tab → **JWT Credentials** → click **Create JWT Token**
+6. Copy the JWT token
+
+#### Step 2: Find Chat IDs
+
+1. Open [API Explorer → List Chats](https://developers.ringcentral.com/api-reference/Chats/listGlipChatsNew)
+2. Sign in and click **Try It Out**
+3. Find the chat you want to monitor and copy its `id` field
+
+#### Step 3: Create a Bot App (Optional)
+
+A Bot App gives your AI a distinct name and avatar in group chats instead of appearing as your personal account.
+
+1. In the Developer Console, click **Register App** → select **Bot Add-in (No UI)**
+2. Configure the app:
+   - **Security** → App Scopes: check **ReadAccounts**, **TeamMessaging**, **WebSocketsSubscription**
+   - **Access**: Private
+3. Click **Create**
+4. Go to the **Bot** tab → click **Add** to install the bot to your account
+5. Copy the **Bot Token** shown on the Bot tab
+
+#### Interactive Setup
+
+```bash
+ringclaw setup
+```
+
+The wizard will:
+- Prompt for Private App credentials (Client ID, Secret, JWT Token)
+- Validate them against the RingCentral API
+- Prompt for chat IDs to monitor
+- Optionally configure a Bot App token
+- Save everything to `~/.ringclaw/config.json`
 
 **Install channels:**
 

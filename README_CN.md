@@ -38,11 +38,50 @@ ringclaw start
 
 ### RingCentral 配置步骤
 
-1. 前往 [RingCentral 开发者门户](https://developers.ringcentral.com/) 注册应用
-2. 启用 `Team Messaging` 和 `WebSocketsSubscription` 权限
-3. 在应用下创建 JWT 凭据
-4. 通过 [API Explorer](https://developers.ringcentral.com/api-reference/Chats/listGlipChatsNew) 查找目标聊天的 Chat ID
-5. （可选）创建 **Bot App** 用于群组交互 — 参见下方 [Bot 客户端](#bot-客户端)
+> **提示：** 创建好应用后，运行 `ringclaw setup` 可启动交互式向导，自动收集凭据、验证并保存配置文件。
+
+#### 第一步：创建 Private App（必须）
+
+1. 前往 [RingCentral 开发者控制台](https://developers.ringcentral.com/console) 并登录
+2. 点击 **Register App** → 选择 **REST API App**
+3. 配置应用：
+   - **Auth**：JWT auth flow
+   - **Security** → App Scopes：勾选 **ReadAccounts**、**TeamMessaging**、**WebSocketsSubscription**
+   - **Access**：Private（仅限自己的账号）
+4. 点击 **Create** — 获取 **Client ID** 和 **Client Secret**
+5. 进入 **Credentials** 标签 → **JWT Credentials** → 点击 **Create JWT Token**
+6. 复制 JWT Token
+
+#### 第二步：获取 Chat ID
+
+1. 打开 [API Explorer → List Chats](https://developers.ringcentral.com/api-reference/Chats/listGlipChatsNew)
+2. 登录后点击 **Try It Out**
+3. 找到要监控的聊天，复制其 `id` 字段
+
+#### 第三步：创建 Bot App（可选）
+
+Bot App 可以让 AI 在群聊中使用独立的名称和头像回复，而不是以你的个人账号身份发送消息。
+
+1. 在开发者控制台，点击 **Register App** → 选择 **Bot Add-in (No UI)**
+2. 配置应用：
+   - **Security** → App Scopes：勾选 **ReadAccounts**、**TeamMessaging**、**WebSocketsSubscription**
+   - **Access**：Private
+3. 点击 **Create**
+4. 进入 **Bot** 标签 → 点击 **Add** 将 Bot 安装到你的账号
+5. 复制 Bot 标签页上显示的 **Bot Token**
+
+#### 交互式配置向导
+
+```bash
+ringclaw setup
+```
+
+向导会：
+- 提示输入 Private App 凭据（Client ID、Secret、JWT Token）
+- 通过 RingCentral API 验证凭据有效性
+- 提示输入要监控的 Chat ID
+- 可选配置 Bot App Token
+- 将所有配置保存到 `~/.ringclaw/config.json`
 
 **安装渠道：**
 
