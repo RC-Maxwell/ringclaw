@@ -25,8 +25,8 @@ var setupCmd = &cobra.Command{
 Before running this command, you need to create apps at
 https://developers.ringcentral.com/console:
 
-  1. Create a "REST API" app (Private App) with JWT auth
-  2. (Optional) Create a "Bot Add-in" app for group chat interactions
+  1. Create a "Bot Add-in (No UI)" app (required)
+  2. (Optional) Create a "REST API" app (Private App) for summarize & cross-chat
 
 This wizard will collect your credentials, validate them against the
 RingCentral API, and save the configuration to ~/.ringclaw/config.json.`,
@@ -47,38 +47,43 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	fmt.Println("You need to create apps at: https://developers.ringcentral.com/console")
 	fmt.Println()
 
-	// Step 1: Private App credentials
-	fmt.Println("--- Step 1: Private App (REST API) ---")
+	// Step 1: Bot App (required)
+	fmt.Println("--- Step 1: Bot App (Required) ---")
 	fmt.Println()
-	fmt.Println("Create a REST API app with:")
-	fmt.Println("  - Auth type: JWT auth flow")
+	fmt.Println("Create a Bot Add-in (No UI) app with:")
 	fmt.Println("  - Scopes: ReadAccounts, TeamMessaging, WebSocketsSubscription")
-	fmt.Println("Then create a JWT credential under Credentials > JWT Credentials.")
+	fmt.Println("  - Install it to your account, then copy the token from the Bot tab")
 	fmt.Println()
 
-	cfg.RC.ClientID = promptWithDefault(reader, "Client ID", cfg.RC.ClientID)
-	cfg.RC.ClientSecret = promptWithDefault(reader, "Client Secret", cfg.RC.ClientSecret)
-	cfg.RC.JWTToken = promptWithDefault(reader, "JWT Token", cfg.RC.JWTToken)
+	cfg.RC.BotToken = promptWithDefault(reader, "Bot Token", cfg.RC.BotToken)
 	cfg.RC.ServerURL = promptWithDefault(reader, "Server URL", withDefault(cfg.RC.ServerURL, "https://platform.ringcentral.com"))
 
-	// Validate Private App
-	fmt.Println()
-	fmt.Print("Validating Private App credentials... ")
-	if err := validatePrivateApp(cfg); err != nil {
-		fmt.Println("FAILED")
-		fmt.Printf("  Error: %v\n", err)
-		fmt.Println("  Please check your Client ID, Client Secret, and JWT Token.")
-		fmt.Println("  Common issues:")
-		fmt.Println("    - JWT token expired or not created yet")
-		fmt.Println("    - Client ID/Secret copied incorrectly")
-		fmt.Println("    - Missing ReadAccounts scope")
+	if cfg.RC.BotToken != "" {
 		fmt.Println()
-		if !promptYesNo(reader, "Save anyway and fix later?") {
-			fmt.Println("Setup aborted.")
-			return nil
+		fmt.Print("Validating Bot Token... ")
+		if err := validateBotToken(cfg); err != nil {
+			fmt.Println("FAILED")
+			fmt.Printf("  Error: %v\n", err)
+			fmt.Println("  Please check that:")
+			fmt.Println("    - The bot is installed to your account")
+			fmt.Println("    - The token is copied from the Bot tab, not Credentials")
+			fmt.Println()
+			if !promptYesNo(reader, "Save anyway and fix later?") {
+				fmt.Println("Setup aborted.")
+				return nil
+			}
+		} else {
+			fmt.Println("OK")
 		}
+	}
+
+	mentionOnly := cfg.RC.IsBotMentionOnly()
+	if promptYesNo(reader, fmt.Sprintf("Require @mention in group chats? (current: %v)", mentionOnly)) {
+		t := true
+		cfg.RC.BotMentionOnly = &t
 	} else {
-		fmt.Println("OK")
+		f := false
+		cfg.RC.BotMentionOnly = &f
 	}
 
 	// Step 2: Chat IDs
@@ -102,40 +107,31 @@ func runSetup(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Step 3: Bot App (optional)
+	// Step 3: Private App (optional)
 	fmt.Println()
-	fmt.Println("--- Step 3: Bot App (Optional) ---")
+	fmt.Println("--- Step 3: Private App (Optional) ---")
 	fmt.Println()
-	fmt.Println("A Bot App gives your AI a distinct identity in group chats.")
-	fmt.Println("Create a Bot Add-in (No UI) app with:")
-	fmt.Println("  - Scopes: ReadAccounts, TeamMessaging, WebSocketsSubscription")
-	fmt.Println("  - Install it to get the bot token from the Bot tab")
+	fmt.Println("A Private App (REST API with JWT) enables:")
+	fmt.Println("  - Summarize conversations from other chats")
+	fmt.Println("  - Cross-chat actions and broader API access")
 	fmt.Println()
 
-	if promptYesNo(reader, "Configure a Bot App?") {
-		cfg.RC.BotToken = promptWithDefault(reader, "Bot Token", cfg.RC.BotToken)
+	if promptYesNo(reader, "Configure a Private App?") {
+		cfg.RC.ClientID = promptWithDefault(reader, "Client ID", cfg.RC.ClientID)
+		cfg.RC.ClientSecret = promptWithDefault(reader, "Client Secret", cfg.RC.ClientSecret)
+		cfg.RC.JWTToken = promptWithDefault(reader, "JWT Token", cfg.RC.JWTToken)
 
-		if cfg.RC.BotToken != "" {
-			fmt.Print("Validating Bot Token... ")
-			if err := validateBotToken(cfg); err != nil {
+		if cfg.RC.HasPrivateApp() {
+			fmt.Println()
+			fmt.Print("Validating Private App credentials... ")
+			if err := validatePrivateApp(cfg); err != nil {
 				fmt.Println("FAILED")
 				fmt.Printf("  Error: %v\n", err)
-				fmt.Println("  Please check that:")
-				fmt.Println("    - The bot is installed to your account")
-				fmt.Println("    - The token is copied from the Bot tab, not Credentials")
+				fmt.Println("  Please check your Client ID, Client Secret, and JWT Token.")
 				fmt.Println()
 			} else {
 				fmt.Println("OK")
 			}
-		}
-
-		mentionOnly := cfg.RC.IsBotMentionOnly()
-		if promptYesNo(reader, fmt.Sprintf("Require @mention in group chats? (current: %v)", mentionOnly)) {
-			t := true
-			cfg.RC.BotMentionOnly = &t
-		} else {
-			f := false
-			cfg.RC.BotMentionOnly = &f
 		}
 	}
 
@@ -144,15 +140,15 @@ func runSetup(cmd *cobra.Command, args []string) error {
 	fmt.Println("--- Configuration Summary ---")
 	fmt.Println()
 	fmt.Printf("  Server URL:    %s\n", cfg.RC.ServerURL)
-	fmt.Printf("  Client ID:     %s\n", maskSecret(cfg.RC.ClientID))
-	fmt.Printf("  Client Secret: %s\n", maskSecret(cfg.RC.ClientSecret))
-	fmt.Printf("  JWT Token:     %s\n", maskSecret(cfg.RC.JWTToken))
+	fmt.Printf("  Bot Token:     %s\n", maskSecret(cfg.RC.BotToken))
+	fmt.Printf("  Mention Only:  %v\n", cfg.RC.IsBotMentionOnly())
 	fmt.Printf("  Chat IDs:      %v\n", cfg.RC.ChatIDs)
-	if cfg.RC.BotToken != "" {
-		fmt.Printf("  Bot Token:     %s\n", maskSecret(cfg.RC.BotToken))
-		fmt.Printf("  Mention Only:  %v\n", cfg.RC.IsBotMentionOnly())
+	if cfg.RC.HasPrivateApp() {
+		fmt.Printf("  Client ID:     %s\n", maskSecret(cfg.RC.ClientID))
+		fmt.Printf("  Client Secret: %s\n", maskSecret(cfg.RC.ClientSecret))
+		fmt.Printf("  JWT Token:     %s\n", maskSecret(cfg.RC.JWTToken))
 	} else {
-		fmt.Printf("  Bot:           not configured\n")
+		fmt.Printf("  Private App:   not configured (summarize disabled)\n")
 	}
 	fmt.Println()
 
