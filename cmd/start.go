@@ -247,15 +247,26 @@ func createAgentByName(ctx context.Context, cfg *config.Config, name string) age
 			slog.Warn("HTTP agent has no endpoint", "component", "agent", "name", name)
 			return nil
 		}
+		var timeout time.Duration
+		if agCfg.Timeout > 0 {
+			timeout = time.Duration(agCfg.Timeout) * time.Second
+		}
 		ag := agent.NewHTTPAgent(agent.HTTPAgentConfig{
+			Name:         name,
 			Endpoint:     agCfg.Endpoint,
 			APIKey:       agCfg.APIKey,
 			Headers:      agCfg.Headers,
 			Model:        agCfg.Model,
 			SystemPrompt: agCfg.SystemPrompt,
 			MaxHistory:   agCfg.MaxHistory,
+			Format:       agCfg.Format,
+			Cwd:          agCfg.Cwd,
+			Sender:       agCfg.Sender,
+			ContextMode:  agCfg.ContextMode,
+			GroupJID:     agCfg.GroupJID,
+			Timeout:      timeout,
 		})
-		slog.Info("created HTTP agent", "component", "agent", "name", name, "endpoint", agCfg.Endpoint, "model", agCfg.Model)
+		slog.Info("created HTTP agent", "component", "agent", "name", name, "endpoint", agCfg.Endpoint, "model", agCfg.Model, "format", agCfg.Format)
 		return ag
 	default:
 		slog.Warn("unknown agent type", "component", "agent", "type", agCfg.Type, "name", name)

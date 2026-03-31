@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // Config holds the application configuration.
@@ -53,7 +54,12 @@ type AgentConfig struct {
 	Endpoint     string            `json:"endpoint,omitempty"`      // API endpoint (http type)
 	APIKey       string            `json:"api_key,omitempty"`       // API key (http type)
 	Headers      map[string]string `json:"headers,omitempty"`       // extra HTTP headers (http type)
-	MaxHistory   int               `json:"max_history,omitempty"`   // max history (http type)
+	MaxHistory   int               `json:"max_history,omitempty"`   // max history messages (http type, openai format)
+	Format       string            `json:"format,omitempty"`        // HTTP API format: "openai" (default) or "nanoclaw"
+	Sender       string            `json:"sender,omitempty"`        // sender name (http type, nanoclaw format)
+	ContextMode  string            `json:"context_mode,omitempty"`  // context mode (http type, nanoclaw format)
+	GroupJID     string            `json:"group_jid,omitempty"`     // group JID (http type, nanoclaw format)
+	Timeout      int               `json:"timeout,omitempty"`       // HTTP timeout in seconds (http type)
 }
 
 // BuildAliasMap builds a map from custom alias to agent name from all agent configs.
@@ -131,8 +137,23 @@ func loadEnv(cfg *Config) {
 	if v := os.Getenv("RC_SERVER_URL"); v != "" {
 		cfg.RC.ServerURL = v
 	}
+	if v := os.Getenv("RC_CHAT_IDS"); v != "" {
+		parts := strings.Split(v, ",")
+		chatIDs := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				chatIDs = append(chatIDs, part)
+			}
+		}
+		cfg.RC.ChatIDs = chatIDs
+	}
 	if v := os.Getenv("RC_BOT_TOKEN"); v != "" {
 		cfg.RC.BotToken = v
+	}
+	if v := os.Getenv("RC_BOT_MENTION_ONLY"); v != "" {
+		value := strings.EqualFold(v, "true") || v == "1" || strings.EqualFold(v, "yes")
+		cfg.RC.BotMentionOnly = &value
 	}
 }
 

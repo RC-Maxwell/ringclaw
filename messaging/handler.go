@@ -276,7 +276,7 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ringcentral.Client,
 		}
 		return
 	} else if text == "/new" || text == "/clear" {
-		reply := h.resetDefaultSession(ctx, post.CreatorID)
+		reply := h.resetDefaultSession(ctx, conversationIDForPost(client, post))
 		if err := SendTextReply(ctx, client, chatID, reply); err != nil {
 			slog.Error("failed to send reply", "component", "handler", "error", err)
 		}
@@ -372,9 +372,19 @@ func (h *Handler) HandleMessage(ctx context.Context, client *ringcentral.Client,
 	}
 }
 
+func conversationIDForPost(client *ringcentral.Client, post ringcentral.Post) string {
+	chatID := strings.TrimSpace(post.GroupID)
+	creatorID := strings.TrimSpace(post.CreatorID)
+	if client != nil && client.IsBotDM(chatID) {
+		return fmt.Sprintf("rc:dm:%s:%s", chatID, creatorID)
+	}
+	return fmt.Sprintf("rc:chat:%s:user:%s", chatID, creatorID)
+}
+
 // sendToDefaultAgent sends the message to the default agent and replies.
 func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ringcentral.Client, readClient *ringcentral.Client, post ringcentral.Post, text string) {
 	chatID := post.GroupID
+	conversationID := conversationIDForPost(client, post)
 
 	placeholderID, placeholderErr := SendTypingPlaceholder(ctx, client, chatID)
 	if placeholderErr != nil {
@@ -385,7 +395,7 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ringcentral.Cl
 	var reply string
 	if ag != nil {
 		var err error
-		reply, err = h.chatWithAgent(ctx, ag, post.CreatorID, text+ActionPrompt)
+		reply, err = h.chatWithAgent(ctx, ag, conversationID, text+ActionPrompt)
 		if err != nil {
 			reply = fmt.Sprintf("Error: %v", err)
 		}
@@ -400,6 +410,7 @@ func (h *Handler) sendToDefaultAgent(ctx context.Context, client *ringcentral.Cl
 // sendToNamedAgent sends the message to a specific agent and replies.
 func (h *Handler) sendToNamedAgent(ctx context.Context, client *ringcentral.Client, readClient *ringcentral.Client, post ringcentral.Post, name, message string) {
 	chatID := post.GroupID
+	conversationID := conversationIDForPost(client, post)
 
 	placeholderID, placeholderErr := SendTypingPlaceholder(ctx, client, chatID)
 	if placeholderErr != nil {
@@ -416,7 +427,7 @@ func (h *Handler) sendToNamedAgent(ctx context.Context, client *ringcentral.Clie
 		return
 	}
 
-	reply, err := h.chatWithAgent(ctx, ag, post.CreatorID, message+ActionPrompt)
+	reply, err := h.chatWithAgent(ctx, ag, conversationID, message+ActionPrompt)
 	if err != nil {
 		reply = fmt.Sprintf("Error: %v", err)
 	}
@@ -427,6 +438,7 @@ func (h *Handler) sendToNamedAgent(ctx context.Context, client *ringcentral.Clie
 // broadcastToAgents sends the message to multiple agents in parallel.
 // Each reply is sent as a separate message with the agent name prefix.
 func (h *Handler) broadcastToAgents(ctx context.Context, client *ringcentral.Client, readClient *ringcentral.Client, post ringcentral.Post, names []string, message string) {
+	conversationID := conversationIDForPost(client, post)
 	type result struct {
 		name  string
 		reply string
@@ -440,7 +452,7 @@ func (h *Handler) broadcastToAgents(ctx context.Context, client *ringcentral.Cli
 				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err)}
 				return
 			}
-			reply, err := h.chatWithAgent(ctx, ag, post.CreatorID, message+ActionPrompt)
+			reply, err := h.chatWithAgent(ctx, ag, conversationID, message+ActionPrompt)
 			if err != nil {
 				ch <- result{name: n, reply: fmt.Sprintf("Error: %v", err)}
 				return
@@ -561,16 +573,16 @@ func (h *Handler) switchDefault(ctx context.Context, name string) string {
 	return fmt.Sprintf("switch to %s", name)
 }
 
-// resetDefaultSession resets the session for the given userID on the default agent.
-func (h *Handler) resetDefaultSession(ctx context.Context, userID string) string {
+// resetDefaultSession resets the session for the given conversationID on the default agent.
+func (h *Handler) resetDefaultSession(ctx context.Context, conversationID string) string {
 	ag := h.getDefaultAgent()
 	if ag == nil {
 		return "No agent running."
 	}
 	name := ag.Info().Name
-	sessionID, err := ag.ResetSession(ctx, userID)
+	sessionID, err := ag.ResetSession(ctx, conversationID)
 	if err != nil {
-		slog.Error("reset session failed", "component", "handler", "userID", userID, "error", err)
+		slog.Error("reset session failed", "component", "handler", "conversationID", conversationID, "error", err)
 		return fmt.Sprintf("Failed to reset session: %v", err)
 	}
 	if sessionID != "" {
