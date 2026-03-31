@@ -40,6 +40,7 @@ type NanoClawAgentConfig struct {
 	GroupJID     string
 	Sender       string
 	ContextMode  string
+	Timeout      time.Duration
 }
 
 type nanoClawRequest struct {
@@ -69,6 +70,10 @@ func NewNanoClawAgent(cfg NanoClawAgentConfig) *NanoClawAgent {
 	if cwd == "" {
 		cwd = defaultWorkspace()
 	}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
 	return &NanoClawAgent{
 		name:         cfg.Name,
 		endpoint:     endpoint,
@@ -80,7 +85,7 @@ func NewNanoClawAgent(cfg NanoClawAgentConfig) *NanoClawAgent {
 		groupJID:     strings.TrimSpace(cfg.GroupJID),
 		sender:       strings.TrimSpace(cfg.Sender),
 		contextMode:  contextMode,
-		httpClient:   &http.Client{Timeout: 120 * time.Second},
+		httpClient:   &http.Client{Timeout: timeout},
 	}
 }
 

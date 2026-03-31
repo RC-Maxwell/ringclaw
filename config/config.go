@@ -50,9 +50,10 @@ type AgentConfig struct {
 	APIKey             string            `json:"api_key,omitempty"`       // API key (http or nanoclaw type)
 	Headers            map[string]string `json:"headers,omitempty"`       // extra HTTP headers (http type)
 	MaxHistory         int               `json:"max_history,omitempty"`   // max history (http type)
-	NanoclawGroupJID   string            `json:"nanoclaw_group_jid,omitempty"`
-	NanoclawSender     string            `json:"nanoclaw_sender,omitempty"`
-	NanoclawContextMode string           `json:"nanoclaw_context_mode,omitempty"`
+	NanoclawGroupJID    string            `json:"nanoclaw_group_jid,omitempty"`
+	NanoclawSender      string            `json:"nanoclaw_sender,omitempty"`
+	NanoclawContextMode string            `json:"nanoclaw_context_mode,omitempty"`
+	Timeout             int               `json:"timeout,omitempty"` // HTTP timeout in seconds (nanoclaw/http type)
 }
 
 // BuildAliasMap builds a map from custom alias to agent name from all agent configs.
