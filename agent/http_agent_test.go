@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 )
 
 func TestHTTPAgent_Chat_Success(t *testing.T) {
@@ -257,18 +259,9 @@ func TestHTTPAgent_NanoClaw_ResetSession_Noop(t *testing.T) {
 
 func TestHTTPAgent_Dify_Chat_StoresConversationID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Verify Authorization header
 		if got := r.Header.Get("Authorization"); got != "Bearer dify-key" {
 			t.Fatalf("unexpected auth: %q", got)
 		}
-		// Decode request to check conversation_id on second call
-		var req struct {
-			Query          string `json:"query"`
-			ConversationID string `json:"conversation_id"`
-			User           string `json:"user"`
-		}
-		json.NewDecoder(r.Body).Decode(&req)
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"answer":          "hello from dify",
@@ -279,7 +272,7 @@ func TestHTTPAgent_Dify_Chat_StoresConversationID(t *testing.T) {
 	defer srv.Close()
 
 	ag := NewHTTPAgent(HTTPAgentConfig{
-		Endpoint: srv.URL,
+		Endpoint: srv.URL + "/v1/chat-messages",
 		APIKey:   "dify-key",
 		Format:   "dify",
 	})
@@ -292,33 +285,78 @@ func TestHTTPAgent_Dify_Chat_StoresConversationID(t *testing.T) {
 		t.Fatalf("unexpected reply: %q", reply)
 	}
 
-	// Verify the dify conversation_id was stored
 	f := ag.format.(*difyFormat)
 	f.mu.Lock()
-	stored := f.convIDs["rc-conv-1"]
+	stored := f.sessions["rc-conv-1"].convID
 	f.mu.Unlock()
 	if stored != "dify-conv-123" {
 		t.Errorf("expected dify conv_id stored, got %q", stored)
 	}
 }
 
-func TestHTTPAgent_Dify_ResetSession_ClearsConversationID(t *testing.T) {
-	ag := NewHTTPAgent(HTTPAgentConfig{Format: "dify"})
+func TestHTTPAgent_Dify_ResetSession_DeletesServerConversation(t *testing.T) {
+	var deletedConvID string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			deletedConvID = strings.TrimPrefix(r.URL.Path, "/v1/conversations/")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(map[string]bool{"result": true})
+			return
+		}
+		// chat-messages endpoint
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"answer":          "ok",
+			"conversation_id": "dify-conv-abc",
+		})
+	}))
+	defer srv.Close()
 
-	// Manually prime the conv_id mapping
-	f := ag.format.(*difyFormat)
-	f.mu.Lock()
-	f.convIDs["rc-conv-1"] = "dify-conv-123"
-	f.mu.Unlock()
+	ag := NewHTTPAgent(HTTPAgentConfig{
+		Endpoint: srv.URL + "/v1/chat-messages",
+		APIKey:   "key",
+		Format:   "dify",
+	})
+
+	// First chat to establish a session
+	if _, err := ag.Chat(context.Background(), "rc-conv-1", "hello"); err != nil {
+		t.Fatalf("unexpected chat error: %v", err)
+	}
 
 	ag.ResetSession(context.Background(), "rc-conv-1")
 
+	// Give the goroutine time to complete the DELETE
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && deletedConvID == "" {
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if deletedConvID != "dify-conv-abc" {
+		t.Errorf("expected DELETE for conv dify-conv-abc, got %q", deletedConvID)
+	}
+
+	// Local session should also be cleared
+	f := ag.format.(*difyFormat)
 	f.mu.Lock()
-	stored := f.convIDs["rc-conv-1"]
+	stored := f.sessions["rc-conv-1"].convID
 	f.mu.Unlock()
 	if stored != "" {
-		t.Errorf("expected conv_id cleared after reset, got %q", stored)
+		t.Errorf("expected local session cleared, got %q", stored)
 	}
+}
+
+func TestHTTPAgent_Dify_ResetSession_NoopWhenNoSession(t *testing.T) {
+	// No HTTP calls should be made if there's no active Dify conversation
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected HTTP call: %s %s", r.Method, r.URL.Path)
+	}))
+	defer srv.Close()
+
+	ag := NewHTTPAgent(HTTPAgentConfig{
+		Endpoint: srv.URL + "/v1/chat-messages",
+		Format:   "dify",
+	})
+	// Reset without any prior Chat — should not call DELETE
+	ag.ResetSession(context.Background(), "rc-conv-1")
 }
 
 func TestHTTPAgent_Dify_EmptyAnswer_Error(t *testing.T) {

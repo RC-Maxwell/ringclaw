@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -94,7 +96,7 @@ func NewHTTPAgent(cfg HTTPAgentConfig) *HTTPAgent {
 	case "nanoclaw":
 		f = &nanoclawFormat{}
 	case "dify":
-		f = newDifyFormat()
+		f = newDifyFormat(cfg.Endpoint, cfg.APIKey, &http.Client{Timeout: timeout})
 	default:
 		f = &openaiFormat{}
 	}
@@ -139,7 +141,7 @@ func (a *HTTPAgent) SetCwd(cwd string) {
 	a.cwd = cwd
 }
 
-func (a *HTTPAgent) ResetSession(_ context.Context, conversationID string) (string, error) {
+func (a *HTTPAgent) ResetSession(ctx context.Context, conversationID string) (string, error) {
 	if !a.format.managesHistory() {
 		a.mu.Lock()
 		delete(a.history, conversationID)
@@ -147,10 +149,10 @@ func (a *HTTPAgent) ResetSession(_ context.Context, conversationID string) (stri
 	}
 	// For formats that manage sessions server-side (e.g. dify), clear their mapping too.
 	type sessionResetter interface {
-		resetConversation(string)
+		resetConversation(ctx context.Context, conversationID string)
 	}
 	if r, ok := a.format.(sessionResetter); ok {
-		r.resetConversation(conversationID)
+		r.resetConversation(ctx, conversationID)
 	}
 	return "", nil
 }
@@ -313,30 +315,51 @@ func (f *nanoclawFormat) parseResponse(body []byte, _ string) (string, error) {
 
 // --- Dify format ---
 
-// difyFormat implements the Dify chatflow API.
-// Dify manages conversation history server-side, identified by its own conversation_id.
-// We map each RingClaw conversationID to the corresponding Dify conversation_id.
-type difyFormat struct {
-	mu      sync.Mutex
-	convIDs map[string]string // ringclawConvID -> difyConvID
+// difySession holds Dify-side state for one RingClaw conversation.
+type difySession struct {
+	convID string // Dify conversation_id
+	user   string // user identifier sent to Dify
 }
 
-func newDifyFormat() *difyFormat {
-	return &difyFormat{convIDs: make(map[string]string)}
+// difyFormat implements the Dify chatflow API.
+// Dify manages conversation history server-side, identified by its own conversation_id.
+// We map each RingClaw conversationID to the corresponding Dify session.
+type difyFormat struct {
+	baseURL    string
+	apiKey     string
+	httpClient *http.Client
+	mu         sync.Mutex
+	sessions   map[string]difySession // ringclawConvID -> dify session
+}
+
+func newDifyFormat(endpoint, apiKey string, client *http.Client) *difyFormat {
+	baseURL := endpoint
+	if u, err := url.Parse(endpoint); err == nil {
+		baseURL = u.Scheme + "://" + u.Host
+	}
+	return &difyFormat{
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		httpClient: client,
+		sessions:   make(map[string]difySession),
+	}
 }
 
 func (f *difyFormat) managesHistory() bool { return true }
 func (f *difyFormat) supportsCwd() bool    { return false }
 
 func (f *difyFormat) buildRequest(conversationID, message string, opts formatOpts) ([]byte, error) {
-	f.mu.Lock()
-	difyConvID := f.convIDs[conversationID]
-	f.mu.Unlock()
-
 	user := opts.Sender
 	if user == "" {
 		user = conversationID
 	}
+
+	f.mu.Lock()
+	s := f.sessions[conversationID]
+	s.user = user
+	f.sessions[conversationID] = s
+	difyConvID := s.convID
+	f.mu.Unlock()
 
 	return json.Marshal(map[string]interface{}{
 		"inputs":          map[string]interface{}{},
@@ -360,18 +383,58 @@ func (f *difyFormat) parseResponse(body []byte, conversationID string) (string, 
 	}
 	if result.ConversationID != "" && conversationID != "" {
 		f.mu.Lock()
-		f.convIDs[conversationID] = result.ConversationID
+		s := f.sessions[conversationID]
+		s.convID = result.ConversationID
+		f.sessions[conversationID] = s
 		f.mu.Unlock()
 	}
 	return strings.TrimSpace(result.Answer), nil
 }
 
-// resetConversation clears the Dify conversation_id for the given conversationID so
-// the next message starts a fresh Dify conversation.
-func (f *difyFormat) resetConversation(conversationID string) {
+// resetConversation clears the local session mapping and asynchronously deletes
+// the conversation on the Dify server so history is fully wiped on both sides.
+func (f *difyFormat) resetConversation(ctx context.Context, conversationID string) {
 	f.mu.Lock()
-	delete(f.convIDs, conversationID)
+	s := f.sessions[conversationID]
+	delete(f.sessions, conversationID)
 	f.mu.Unlock()
+
+	if s.convID == "" {
+		return
+	}
+	// Fire-and-forget: the user's /new or /clear should not block on the network call.
+	go func() {
+		if err := f.deleteConversation(ctx, s.convID, s.user); err != nil {
+			slog.Warn("dify: delete conversation failed", "convID", s.convID, "error", err)
+		}
+	}()
+}
+
+// deleteConversation calls DELETE /v1/conversations/{id} on the Dify server.
+func (f *difyFormat) deleteConversation(ctx context.Context, convID, user string) error {
+	body, err := json.Marshal(map[string]string{"user": user})
+	if err != nil {
+		return err
+	}
+	endpoint := f.baseURL + "/v1/conversations/" + convID
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if f.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+f.apiKey)
+	}
+	resp, err := f.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
 }
 
 // --- Helpers ---
