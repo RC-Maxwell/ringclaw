@@ -38,6 +38,7 @@ type RCConfig struct {
 	JWTToken       string   `json:"jwt_token,omitempty"`
 	ChatIDs        []string `json:"chat_ids,omitempty"`
 	UserIDs        []string `json:"user_ids,omitempty"`
+	UserFilter     bool     `json:"user_filter,omitempty"`
 	ServerURL      string   `json:"server_url,omitempty"`
 	BotToken       string   `json:"bot_token,omitempty"`
 	BotMentionOnly *bool    `json:"bot_mention_only,omitempty"`
@@ -46,6 +47,12 @@ type RCConfig struct {
 // HasPrivateApp returns true if all private app credentials are configured.
 func (rc RCConfig) HasPrivateApp() bool {
 	return rc.ClientID != "" && rc.ClientSecret != "" && rc.JWTToken != ""
+}
+
+// IsUserFilterEnabled returns whether user ID filtering is active.
+// Filtering only applies when user_filter is true AND user_ids is non-empty.
+func (rc RCConfig) IsUserFilterEnabled() bool {
+	return rc.UserFilter && len(rc.UserIDs) > 0
 }
 
 // IsBotMentionOnly returns whether the bot requires @mention in group chats.
