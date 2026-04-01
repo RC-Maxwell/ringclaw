@@ -74,6 +74,26 @@ if ($UserPath -notlike "*$InstallDir*") {
     Write-Host "Please restart your terminal for PATH changes to take effect."
 }
 
+# Restart if running in background
+$PidFile = "$env:USERPROFILE\.ringclaw\ringclaw.pid"
+if (Test-Path $PidFile) {
+    $OldPid = Get-Content $PidFile -ErrorAction SilentlyContinue
+    if ($OldPid) {
+        $Proc = Get-Process -Id $OldPid -ErrorAction SilentlyContinue
+        if ($Proc) {
+            Write-Host "Stopping old process (pid=$OldPid)..."
+            Stop-Process -Id $OldPid -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Remove-Item $PidFile -ErrorAction SilentlyContinue
+            Write-Host "Starting new version..."
+            & $DestPath start
+            Write-Host ""
+            Write-Host "ringclaw $Version installed and restarted."
+            exit 0
+        }
+    }
+}
+
 Write-Host ""
 Write-Host "ringclaw $Version installed to $DestPath"
 Write-Host ""
