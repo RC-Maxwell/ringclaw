@@ -220,7 +220,18 @@ func runStart(cmd *cobra.Command, args []string) error {
 	// Start WebSocket monitor (bot client drives WS connection)
 	slog.Info("starting message bridge", "chatIDs", cfg.RC.ChatIDs)
 
-	monitor := ringcentral.NewMonitor(botClient, handler.HandleMessage, cfg.RC.ChatIDs, cfg.RC.IsBotMentionOnly())
+	// Resolve source_user_ids: emails are looked up via directory API; numeric IDs are kept as-is.
+	resolvedUserIDs := cfg.RC.SourceUserIDs
+	if len(cfg.RC.SourceUserIDs) > 0 {
+		lookupClient := botClient
+		if privateClient != nil {
+			lookupClient = privateClient
+		}
+		resolvedUserIDs = lookupClient.ResolveUserIDs(ctx, cfg.RC.SourceUserIDs)
+		slog.Info("source_user_ids resolved", "count", len(resolvedUserIDs), "ids", resolvedUserIDs)
+	}
+
+	monitor := ringcentral.NewMonitor(botClient, handler.HandleMessage, cfg.RC.ChatIDs, resolvedUserIDs, cfg.RC.IsBotMentionOnly())
 	if privateClient != nil {
 		monitor.SetPrivateClient(privateClient)
 		privateClient.SetMonitor(monitor)

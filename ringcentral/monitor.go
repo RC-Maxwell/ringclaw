@@ -35,6 +35,7 @@ type Monitor struct {
 	privateClient  *Client // private app client (optional)
 	botMentionOnly bool
 	allowedChatIDs map[string]bool
+	allowedUserIDs map[string]bool
 	handler        MessageHandler
 	failures       int
 	sentPosts      map[string]time.Time // post ID -> timestamp
@@ -86,8 +87,9 @@ func (m *Monitor) IsSentPost(id string) bool {
 // NewMonitor creates a new WebSocket monitor.
 // botClient is used for WS connection and replies.
 // chatIDs limits which chats are monitored; empty means no chats.
+// sourceUserIDs limits which users' messages are processed; empty means all users.
 // mentionOnly controls whether group chats require @mention.
-func NewMonitor(botClient *Client, handler MessageHandler, chatIDs []string, mentionOnly bool) *Monitor {
+func NewMonitor(botClient *Client, handler MessageHandler, chatIDs []string, sourceUserIDs []string, mentionOnly bool) *Monitor {
 	allowed := make(map[string]bool, len(chatIDs))
 	for _, id := range chatIDs {
 		allowed[id] = true
@@ -96,11 +98,16 @@ func NewMonitor(botClient *Client, handler MessageHandler, chatIDs []string, men
 	if botClient.dmChatID != "" {
 		allowed[botClient.dmChatID] = true
 	}
+	allowedUsers := make(map[string]bool, len(sourceUserIDs))
+	for _, id := range sourceUserIDs {
+		allowedUsers[id] = true
+	}
 	return &Monitor{
 		client:         botClient,
 		botMentionOnly: mentionOnly,
 		handler:        handler,
 		allowedChatIDs: allowed,
+		allowedUserIDs: allowedUsers,
 		sentPosts:      make(map[string]time.Time),
 	}
 }
@@ -335,6 +342,12 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 	// Skip messages from the bot's own extension
 	if m.client.OwnerID() != "" && event.Body.CreatorID == m.client.OwnerID() {
 		slog.Debug("ignoring bot's own post", "component", "monitor", "postID", event.Body.ID)
+		return
+	}
+
+	// Filter by source user IDs (empty = allow all users)
+	if len(m.allowedUserIDs) > 0 && !m.allowedUserIDs[event.Body.CreatorID] {
+		slog.Debug("ignoring message from non-allowed user", "component", "monitor", "userID", event.Body.CreatorID)
 		return
 	}
 
