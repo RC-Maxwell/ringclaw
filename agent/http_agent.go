@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +95,8 @@ func NewHTTPAgent(cfg HTTPAgentConfig) *HTTPAgent {
 	switch strings.ToLower(cfg.Format) {
 	case "nanoclaw":
 		f = &nanoclawFormat{}
+	case "dify":
+		f = newDifyFormat(cfg.Endpoint, cfg.APIKey, &http.Client{Timeout: timeout})
 	default:
 		f = &openaiFormat{}
 	}
@@ -137,11 +141,18 @@ func (a *HTTPAgent) SetCwd(cwd string) {
 	a.cwd = cwd
 }
 
-func (a *HTTPAgent) ResetSession(_ context.Context, conversationID string) (string, error) {
+func (a *HTTPAgent) ResetSession(ctx context.Context, conversationID string) (string, error) {
 	if !a.format.managesHistory() {
 		a.mu.Lock()
 		delete(a.history, conversationID)
 		a.mu.Unlock()
+	}
+	// For formats that manage sessions server-side (e.g. dify), clear their mapping too.
+	type sessionResetter interface {
+		resetConversation(ctx context.Context, conversationID string)
+	}
+	if r, ok := a.format.(sessionResetter); ok {
+		r.resetConversation(ctx, conversationID)
 	}
 	return "", nil
 }
@@ -300,6 +311,160 @@ func (f *nanoclawFormat) parseResponse(body []byte) (string, error) {
 		return "", fmt.Errorf("empty response")
 	}
 	return trimmed, nil
+}
+
+// --- Dify format ---
+
+const difySessionMaxAge = 24 * time.Hour
+
+// difySession holds Dify-side state for one RingClaw conversation.
+type difySession struct {
+	convID     string    // Dify conversation_id
+	user       string    // user identifier sent to Dify
+	lastAccess time.Time // for stale session eviction
+}
+
+// difyFormat implements the Dify chatflow API.
+// Dify manages conversation history server-side, identified by its own conversation_id.
+// We map each RingClaw conversationID to the corresponding Dify session.
+type difyFormat struct {
+	baseURL       string
+	apiKey        string
+	httpClient    *http.Client
+	mu            sync.Mutex
+	sessions      map[string]difySession // ringclawConvID -> dify session
+	pendingConvID string                 // set by buildRequest, read by parseResponse (same Chat call)
+}
+
+func newDifyFormat(endpoint, apiKey string, client *http.Client) *difyFormat {
+	// Derive baseURL: strip from "/v1/" onward so DELETE paths work correctly
+	// e.g. "https://api.dify.ai/v1/chat-messages" → "https://api.dify.ai"
+	baseURL := endpoint
+	if u, err := url.Parse(endpoint); err == nil {
+		path := u.Path
+		if idx := strings.Index(path, "/v1/"); idx >= 0 {
+			u.Path = path[:idx]
+		} else {
+			u.Path = ""
+		}
+		u.RawQuery = ""
+		u.Fragment = ""
+		baseURL = u.String()
+	}
+	if strings.HasPrefix(endpoint, "http://") {
+		slog.Warn("dify endpoint uses HTTP; consider HTTPS to avoid 301 redirect (POST→GET downgrade)", "endpoint", endpoint)
+	}
+	return &difyFormat{
+		baseURL:    baseURL,
+		apiKey:     apiKey,
+		httpClient: client,
+		sessions:   make(map[string]difySession),
+	}
+}
+
+func (f *difyFormat) managesHistory() bool { return true }
+func (f *difyFormat) supportsCwd() bool    { return false }
+
+func (f *difyFormat) buildRequest(conversationID, message string, opts formatOpts) ([]byte, error) {
+	user := opts.Sender
+	if user == "" {
+		user = conversationID
+	}
+
+	now := time.Now()
+	f.mu.Lock()
+	s := f.sessions[conversationID]
+	s.user = user
+	s.lastAccess = now
+	f.sessions[conversationID] = s
+	difyConvID := s.convID
+	f.pendingConvID = conversationID
+	// Evict stale sessions
+	for k, v := range f.sessions {
+		if k != conversationID && now.Sub(v.lastAccess) > difySessionMaxAge {
+			delete(f.sessions, k)
+		}
+	}
+	f.mu.Unlock()
+
+	return json.Marshal(map[string]interface{}{
+		"inputs":          map[string]interface{}{},
+		"query":           message,
+		"response_mode":   "blocking",
+		"conversation_id": difyConvID,
+		"user":            user,
+	})
+}
+
+func (f *difyFormat) parseResponse(body []byte) (string, error) {
+	var result struct {
+		Answer         string `json:"answer"`
+		ConversationID string `json:"conversation_id"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return "", fmt.Errorf("parse dify response: %w", err)
+	}
+	if strings.TrimSpace(result.Answer) == "" {
+		return "", fmt.Errorf("empty answer in dify response")
+	}
+	// Store the Dify conversation_id using the pendingConvID set by buildRequest
+	f.mu.Lock()
+	convID := f.pendingConvID
+	if result.ConversationID != "" && convID != "" {
+		s := f.sessions[convID]
+		s.convID = result.ConversationID
+		f.sessions[convID] = s
+	}
+	f.mu.Unlock()
+	return strings.TrimSpace(result.Answer), nil
+}
+
+// resetConversation clears the local session mapping and asynchronously deletes
+// the conversation on the Dify server so history is fully wiped on both sides.
+func (f *difyFormat) resetConversation(_ context.Context, conversationID string) {
+	f.mu.Lock()
+	s := f.sessions[conversationID]
+	delete(f.sessions, conversationID)
+	f.mu.Unlock()
+
+	if s.convID == "" {
+		return
+	}
+	// Fire-and-forget with Background context so it survives handler return.
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := f.deleteConversation(ctx, s.convID, s.user); err != nil {
+			slog.Warn("dify: delete conversation failed", "convID", s.convID, "error", err)
+		}
+	}()
+}
+
+// deleteConversation calls DELETE /v1/conversations/{id} on the Dify server.
+func (f *difyFormat) deleteConversation(ctx context.Context, convID, user string) error {
+	body, err := json.Marshal(map[string]string{"user": user})
+	if err != nil {
+		return err
+	}
+	endpoint := f.baseURL + "/v1/conversations/" + url.PathEscape(convID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if f.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+f.apiKey)
+	}
+	resp, err := f.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(b))
+	}
+	return nil
 }
 
 // --- Helpers ---
