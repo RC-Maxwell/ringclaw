@@ -35,8 +35,7 @@ type Monitor struct {
 	privateClient  *Client // private app client (optional)
 	botMentionOnly bool
 	allowedChatIDs map[string]bool
-	allowedUserIDs    map[string]bool
-	userFilterEnabled bool
+	allowedUserIDs map[string]bool
 	handler        MessageHandler
 	failures       int
 	sentPosts      map[string]time.Time // post ID -> timestamp
@@ -88,9 +87,9 @@ func (m *Monitor) IsSentPost(id string) bool {
 // NewMonitor creates a new WebSocket monitor.
 // botClient is used for WS connection and replies.
 // chatIDs limits which chats are monitored; empty means no chats.
-// userIDs is the allowlist for user filtering; only used when userFilterEnabled is true.
+// sourceUserIDs limits which users' messages are processed; empty means all users.
 // mentionOnly controls whether group chats require @mention.
-func NewMonitor(botClient *Client, handler MessageHandler, chatIDs []string, userIDs []string, userFilterEnabled bool, mentionOnly bool) *Monitor {
+func NewMonitor(botClient *Client, handler MessageHandler, chatIDs []string, sourceUserIDs []string, mentionOnly bool) *Monitor {
 	allowed := make(map[string]bool, len(chatIDs))
 	for _, id := range chatIDs {
 		allowed[id] = true
@@ -99,18 +98,17 @@ func NewMonitor(botClient *Client, handler MessageHandler, chatIDs []string, use
 	if botClient.dmChatID != "" {
 		allowed[botClient.dmChatID] = true
 	}
-	allowedUsers := make(map[string]bool, len(userIDs))
-	for _, id := range userIDs {
+	allowedUsers := make(map[string]bool, len(sourceUserIDs))
+	for _, id := range sourceUserIDs {
 		allowedUsers[id] = true
 	}
 	return &Monitor{
-		client:            botClient,
-		botMentionOnly:    mentionOnly,
-		handler:           handler,
-		allowedChatIDs:    allowed,
-		allowedUserIDs:    allowedUsers,
-		userFilterEnabled: userFilterEnabled,
-		sentPosts:         make(map[string]time.Time),
+		client:         botClient,
+		botMentionOnly: mentionOnly,
+		handler:        handler,
+		allowedChatIDs: allowed,
+		allowedUserIDs: allowedUsers,
+		sentPosts:      make(map[string]time.Time),
 	}
 }
 
@@ -341,8 +339,8 @@ func (m *Monitor) handleWSMessage(ctx context.Context, msg []byte) {
 		return
 	}
 
-	// Filter by allowed user IDs (only when user_filter is enabled and user_ids is configured)
-	if m.userFilterEnabled && len(m.allowedUserIDs) > 0 && !m.allowedUserIDs[event.Body.CreatorID] {
+	// Filter by source user IDs (empty = allow all users)
+	if len(m.allowedUserIDs) > 0 && !m.allowedUserIDs[event.Body.CreatorID] {
 		slog.Debug("ignoring message from non-allowed user", "component", "monitor", "userID", event.Body.CreatorID)
 		return
 	}
