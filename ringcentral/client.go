@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net/http"
 	"net/url"
@@ -284,6 +285,38 @@ func (c *Client) SearchDirectory(ctx context.Context, searchString string) (*Dir
 		return nil, fmt.Errorf("parse directory search: %w", err)
 	}
 	return &result, nil
+}
+
+// ResolveUserIDs resolves a mixed list of numeric IDs and email addresses to numeric IDs.
+// Entries that already look like numeric IDs are kept as-is.
+// Entries containing "@" are looked up via SearchDirectory; unresolved entries are logged
+// as warnings and skipped so a typo doesn't silently block all users.
+func (c *Client) ResolveUserIDs(ctx context.Context, ids []string) []string {
+	resolved := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !strings.Contains(id, "@") {
+			resolved = append(resolved, id)
+			continue
+		}
+		result, err := c.SearchDirectory(ctx, id)
+		if err != nil {
+			slog.Warn("user_ids: failed to search directory for email", "email", id, "error", err)
+			continue
+		}
+		found := false
+		for _, entry := range result.Records {
+			if strings.EqualFold(entry.Email, id) {
+				slog.Info("user_ids: resolved email to ID", "email", id, "id", entry.ID)
+				resolved = append(resolved, entry.ID)
+				found = true
+				break
+			}
+		}
+		if !found {
+			slog.Warn("user_ids: email not found in directory, entry will be skipped", "email", id)
+		}
+	}
+	return resolved
 }
 
 // CreateConversation creates or finds an existing Direct chat with the given members.
