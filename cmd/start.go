@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lmittmann/tint"
 	"github.com/ringclaw/ringclaw/agent"
 	"github.com/ringclaw/ringclaw/api"
 	"github.com/ringclaw/ringclaw/config"
@@ -50,14 +51,28 @@ func runStart(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Initialize log level: flag > config > default (info)
+	// Initialize log level and format: flag > config > default
 	levelStr := cfg.LogLevel
 	if logLevelFlag != "" {
 		levelStr = logLevelFlag
 	}
 	logLevel := config.ParseLogLevel(levelStr)
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})))
 	config.SetDebugMode(logLevel == slog.LevelDebug)
+
+	formatStr := strings.ToLower(cfg.LogFormat)
+	if logFormatFlag != "" {
+		formatStr = strings.ToLower(logFormatFlag)
+	}
+	var logHandler slog.Handler
+	switch formatStr {
+	case "json":
+		logHandler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	case "color":
+		logHandler = tint.NewHandler(os.Stderr, &tint.Options{Level: logLevel, TimeFormat: time.DateTime})
+	default:
+		logHandler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel})
+	}
+	slog.SetDefault(slog.New(logHandler))
 
 	// Validate RC config: bot token is required, private app is optional
 	if cfg.RC.BotToken == "" {

@@ -26,8 +26,9 @@ func FullVersion() string {
 }
 
 var (
-	jsonOutput   bool
-	logLevelFlag string
+	jsonOutput    bool
+	logLevelFlag  string
+	logFormatFlag string
 )
 
 var rootCmd = &cobra.Command{
@@ -40,6 +41,7 @@ var rootCmd = &cobra.Command{
 func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format")
 	rootCmd.PersistentFlags().StringVar(&logLevelFlag, "log-level", "", "Log level: debug, info, warn, error")
+	rootCmd.PersistentFlags().StringVar(&logFormatFlag, "log-format", "", "Log format: text, json, color")
 	rootCmd.Version = FullVersion()
 }
 

@@ -37,7 +37,8 @@ type Config struct {
 	DefaultAgent   string                 `json:"default_agent"`
 	AgentWorkspace string                 `json:"agent_workspace,omitempty"`
 	APIAddr        string                 `json:"api_addr,omitempty"`
-	LogLevel       string                 `json:"log_level,omitempty"` // "debug", "info" (default), "warn", "error"
+	LogLevel       string                 `json:"log_level,omitempty"`  // "debug", "info" (default), "warn", "error"
+	LogFormat      string                 `json:"log_format,omitempty"` // "text" (default), "json", "color"
 	Agents         map[string]AgentConfig `json:"agents"`
 	RC             RCConfig               `json:"ringcentral,omitempty"`
 	Heartbeat      HeartbeatConfig        `json:"heartbeat,omitempty"`
