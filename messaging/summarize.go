@@ -18,7 +18,7 @@ import (
 
 var summarizeKeywords = []string{"总结", "summarize", "summary"}
 
-const defaultSummaryMessageLimit = 200
+const defaultSummaryMessageLimit = 250
 
 // chatCacheEntry stores a resolved chat name -> ID mapping.
 type chatCacheEntry struct {

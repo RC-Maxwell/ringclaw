@@ -32,31 +32,31 @@ type AgentMeta struct {
 
 // Handler processes incoming RingCentral messages and dispatches replies.
 type Handler struct {
-	mu                       sync.RWMutex
-	defaultName              string
-	agents                   map[string]agent.Agent // name -> running agent
-	agentMetas               []AgentMeta            // all configured agents (for /status)
-	customAliases            map[string]string      // custom alias -> agent name (from config)
+	mu            sync.RWMutex
+	defaultName   string
+	agents        map[string]agent.Agent // name -> running agent
+	agentMetas    []AgentMeta            // all configured agents (for /status)
+	customAliases map[string]string      // custom alias -> agent name (from config)
+	factory       AgentFactory
+	saveDefault   SaveDefaultFunc
+	version       string
+	startTime     time.Time
+	seenMsgs      sync.Map // map[string]time.Time — dedup by post ID
+	seenMsgCount  int64    // approximate count for capacity limiting
+	cronStore     *CronStore
+
 	groupSummaryGroupID      string
 	groupSummaryMessageLimit int
-	factory                  AgentFactory
-	saveDefault              SaveDefaultFunc
-	version                  string
-	startTime                time.Time
-	seenMsgs                 sync.Map // map[string]time.Time — dedup by post ID
-	seenMsgCount             int64    // approximate count for capacity limiting
-	cronStore                *CronStore
 }
 
 // NewHandler creates a new message handler.
 func NewHandler(factory AgentFactory, saveDefault SaveDefaultFunc, version string) *Handler {
 	return &Handler{
-		agents:                   make(map[string]agent.Agent),
-		groupSummaryMessageLimit: defaultSummaryMessageLimit,
-		factory:                  factory,
-		saveDefault:              saveDefault,
-		version:                  version,
-		startTime:                time.Now(),
+		agents:      make(map[string]agent.Agent),
+		factory:     factory,
+		saveDefault: saveDefault,
+		version:     version,
+		startTime:   time.Now(),
 	}
 }
 

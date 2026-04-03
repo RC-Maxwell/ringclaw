@@ -13,13 +13,15 @@ import (
 var groupCrossTargetDenyPhrases = []string{
 	"其他群", "别的群", "另一个群", "其它群", "私聊", "别人", "其他人", "别人的",
 	"other group", "another group", "other chat", "another chat", "private chat", "direct chat", "dm ",
-	"chat with", "conversation with", "summary of", "summarize user", "summarize john", "summarize maxwell",
+	"chat with", "conversation with",
 }
 
+// genericCurrentGroupSummaryTokens are words that indicate the user is referring
+// to the current group itself, not targeting a specific person or chat.
+// Keep this list tight — only structural/deictic words, not content words like
+// "讨论" or "discussion" which could appear inside a person-targeting phrase.
 var genericCurrentGroupSummaryTokens = []string{
 	"这个", "当前", "本", "这里", "这边", "this", "current", "here",
-	"重要", "关键信息", "信息", "要点", "重点", "内容", "讨论", "记录", "历史", "总结",
-	"important", "key", "highlights", "summary", "content", "discussion", "history", "messages",
 }
 
 // classifyAndRoute uses AI to classify the user's intent and routes accordingly.
@@ -126,90 +128,22 @@ func isGenericCurrentGroupSummaryTarget(target string) bool {
 }
 
 func (h *Handler) handleSummarize(ctx context.Context, replyClient *ringcentral.Client, readClient *ringcentral.Client, post ringcentral.Post) {
-	chatID := post.GroupID
 	text := strings.TrimSpace(post.Text)
-
-	placeholderID, placeholderErr := SendTypingPlaceholder(ctx, replyClient, chatID)
-	if placeholderErr != nil {
-		slog.Error("failed to send typing placeholder", "component", "handler", "error", placeholderErr)
-	}
-
-	sendReply := func(reply string) {
-		if placeholderID != "" {
-			if err := UpdatePostText(ctx, replyClient, chatID, placeholderID, reply); err != nil {
-				slog.Error("failed to update placeholder", "component", "handler", "error", err)
-				logSendError(SendTextReply(ctx, replyClient, chatID, reply))
-			}
-		} else {
-			logSendError(SendTextReply(ctx, replyClient, chatID, reply))
-		}
-	}
 
 	// Resolve target chat using readClient (private app has access to all chats)
 	req, err := ResolveChatTarget(ctx, readClient, text, post.Mentions)
 	if err != nil {
-		sendReply(fmt.Sprintf("Error: %v", err))
+		logSendError(SendTextReply(ctx, replyClient, post.GroupID, fmt.Sprintf("Error: %v", err)))
 		return
 	}
 
 	slog.Info("summarize target chat", "component", "summarize", "chatName", req.ChatName, "chatID", req.ChatID, "from", req.TimeFrom.Format(time.RFC3339))
-
-	// Build prompt using readClient (private app can read any chat's messages)
-	prompt, err := BuildSummaryPrompt(ctx, readClient, req)
-	if err != nil {
-		sendReply(fmt.Sprintf("Error: %v", err))
-		return
-	}
-
-	// Send to default agent
-	ag := h.getDefaultAgent()
-	if ag == nil {
-		sendReply("Error: no agent available for summarization")
-		return
-	}
-
-	reply, err := h.chatWithAgent(ctx, ag, post.CreatorID, prompt)
-	if err != nil {
-		sendReply(fmt.Sprintf("Error: %v", err))
-		return
-	}
-
-	// Parse and execute any ACTION blocks from the agent's response
-	cleanReply, actions := ParseAgentActions(reply)
-	if replyClient.IsBot() {
-		sendReply(cleanReply)
-	} else {
-		sendReply(wrapAnswer(cleanReply))
-	}
-
-	if len(actions) > 0 {
-		// Execute actions in the current chat (not the summarized chat) using readClient
-		results := ExecuteAgentActions(ctx, replyClient, readClient, chatID, actions)
-		if len(results) > 0 {
-			logSendError(SendTextReply(ctx, replyClient, chatID, strings.Join(results, "\n")))
-		}
-	}
+	h.executeSummarize(ctx, replyClient, readClient, post, req)
 }
 
 func (h *Handler) handleCurrentGroupSummarize(ctx context.Context, replyClient *ringcentral.Client, readClient *ringcentral.Client, post ringcentral.Post) {
 	chatID := post.GroupID
 	text := strings.TrimSpace(post.Text)
-
-	placeholderID, placeholderErr := SendTypingPlaceholder(ctx, replyClient, chatID)
-	if placeholderErr != nil {
-		slog.Error("failed to send typing placeholder", "component", "handler", "error", placeholderErr)
-	}
-
-	sendReply := func(reply string) {
-		if placeholderID != "" {
-			if err := UpdatePostText(ctx, replyClient, chatID, placeholderID, reply); err != nil {
-				slog.Error("failed to update placeholder", "component", "handler", "error", err)
-				logSendError(SendTextReply(ctx, replyClient, chatID, reply))
-			}
-		} else {
-			logSendError(SendTextReply(ctx, replyClient, chatID, reply))
-		}
-	}
 
 	req := &SummarizeRequest{
 		ChatID:       chatID,
@@ -220,6 +154,28 @@ func (h *Handler) handleCurrentGroupSummarize(ctx context.Context, replyClient *
 	}
 
 	slog.Info("summarize current group", "component", "summarize", "chatName", req.ChatName, "chatID", req.ChatID, "from", req.TimeFrom.Format(time.RFC3339), "limit", req.MessageLimit)
+	h.executeSummarize(ctx, replyClient, readClient, post, req)
+}
+
+// executeSummarize is the shared summarize execution path for both DM and group summarize.
+func (h *Handler) executeSummarize(ctx context.Context, replyClient *ringcentral.Client, readClient *ringcentral.Client, post ringcentral.Post, req *SummarizeRequest) {
+	chatID := post.GroupID
+
+	placeholderID, placeholderErr := SendTypingPlaceholder(ctx, replyClient, chatID)
+	if placeholderErr != nil {
+		slog.Error("failed to send typing placeholder", "component", "handler", "error", placeholderErr)
+	}
+
+	sendReply := func(reply string) {
+		if placeholderID != "" {
+			if err := UpdatePostText(ctx, replyClient, chatID, placeholderID, reply); err != nil {
+				slog.Error("failed to update placeholder", "component", "handler", "error", err)
+				logSendError(SendTextReply(ctx, replyClient, chatID, reply))
+			}
+		} else {
+			logSendError(SendTextReply(ctx, replyClient, chatID, reply))
+		}
+	}
 
 	prompt, err := BuildSummaryPrompt(ctx, readClient, req)
 	if err != nil {

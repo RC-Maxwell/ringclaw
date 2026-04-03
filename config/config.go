@@ -60,16 +60,17 @@ type CronConfig struct {
 
 // RCConfig holds RingCentral connection configuration.
 type RCConfig struct {
-	ClientID                 string   `json:"client_id,omitempty"`
-	ClientSecret             string   `json:"client_secret,omitempty"`
-	JWTToken                 string   `json:"jwt_token,omitempty"`
-	ChatIDs                  []string `json:"chat_ids,omitempty"`
-	SourceUserIDs            []string `json:"source_user_ids,omitempty"`
-	ServerURL                string   `json:"server_url,omitempty"`
-	BotToken                 string   `json:"bot_token,omitempty"`
-	BotMentionOnly           *bool    `json:"bot_mention_only,omitempty"`
-	GroupSummaryGroupID      string   `json:"group_summary_group_id,omitempty"`
-	GroupSummaryMessageLimit int      `json:"group_summary_message_limit,omitempty"`
+	ClientID       string   `json:"client_id,omitempty"`
+	ClientSecret   string   `json:"client_secret,omitempty"`
+	JWTToken       string   `json:"jwt_token,omitempty"`
+	ChatIDs        []string `json:"chat_ids,omitempty"`
+	SourceUserIDs  []string `json:"source_user_ids,omitempty"`
+	ServerURL      string   `json:"server_url,omitempty"`
+	BotToken       string   `json:"bot_token,omitempty"`
+	BotMentionOnly *bool    `json:"bot_mention_only,omitempty"`
+
+	GroupSummaryGroupID      string `json:"group_summary_group_id,omitempty"`
+	GroupSummaryMessageLimit int    `json:"group_summary_message_limit,omitempty"`
 }
 
 // HasPrivateApp returns true if all private app credentials are configured.
