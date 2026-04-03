@@ -214,10 +214,10 @@ func TestBuildSummaryPrompt_DefaultMessageLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSummaryPrompt returned error: %v", err)
 	}
-	if gotRecordCount != "200" {
-		t.Fatalf("expected default recordCount=200, got %q", gotRecordCount)
+	if gotRecordCount != "250" {
+		t.Fatalf("expected default recordCount=250, got %q", gotRecordCount)
 	}
-	if !strings.Contains(prompt, "most recent 200 messages") {
+	if !strings.Contains(prompt, "most recent 250 messages") {
 		t.Fatalf("expected prompt to mention default message limit, got %q", prompt)
 	}
 }
